@@ -1,17 +1,18 @@
+import uvicorn
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
-
-from .routers import auth, dashboard
-from .database import Base, engine
-from .routers import users
-from .routers import groups
-from .routers import payments
-from .routers import students
-from .routers import attendance
-from .routers import teachers
-from .routers import tests
-from .routers import courses
-
+from routers.database import  engine, Base
+from routers import (
+    auth_router,
+    attend_router,
+    payments_router,
+    groups_router,
+    courses_router,
+    students_router,
+    teachers_router,
+    tests_router,
+    users_router
+)
 app = FastAPI(title="LMS Backend")
 
 origins = [
@@ -31,18 +32,21 @@ app.add_middleware(
 
 Base.metadata.create_all(bind=engine)
 
-app.include_router(auth.router)
-app.include_router(dashboard.router)
-app.include_router(payments.router)
-app.include_router(users.router)
-app.include_router(groups.router)
-app.include_router(students.router)
-app.include_router(attendance.router)
-app.include_router(teachers.router)
-app.include_router(tests.router)
-app.include_router(courses.router)
+app.include_router(auth_router)
+app.include_router(attend_router)
+app.include_router(payments_router)
+app.include_router(courses_router)
+app.include_router(groups_router)
+app.include_router(tests_router)
+app.include_router(students_router)
+app.include_router(teachers_router)
+app.include_router(users_router)
+
 
 
 @app.get("/")
 def home():
     return {"message": "LMS backend is running"}
+
+if '__name__' == "__main__":
+    uvicorn.run(host='127.0.0.1', port='8001')

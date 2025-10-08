@@ -1,18 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from .. import models, schemas, database
 from .auth import get_current_user
-from ..dependencies import get_db
+from .dependencies import get_db
+from .schemas import CourseOut, CourseCreate
+from .models import User, Course
 
-router = APIRouter(prefix="/courses", tags=["Courses"])
+courses_router = APIRouter(prefix="/courses", tags=["Courses"])
 
-@router.post("/", response_model=schemas.CourseOut)
+@courses_router.post("/", response_model=CourseOut)
 def create_course(
-    course: schemas.CourseCreate,
+    course: CourseCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    new_course = models.Course(
+    new_course = Course(
         title=course.title,
         description=course.description,
         start_date=course.start_date,
@@ -23,7 +24,7 @@ def create_course(
     db.add(new_course)
     db.commit()
     db.refresh(new_course)
-    return schemas.CourseOut(
+    return CourseOut(
         id=new_course.id,
         title=new_course.title,
         description=new_course.description,
@@ -35,11 +36,11 @@ def create_course(
     )
 
 
-@router.get("/", response_model=list[schemas.CourseOut])
+@courses_router.get("/", response_model=list[CourseOut])
 def get_courses(db: Session = Depends(get_db)):
-    courses = db.query(models.Course).all()
+    courses = db.query(Course).all()
     return [
-        schemas.CourseOut(
+        CourseOut(
             id=c.id,
             title=c.title,
             description=c.description,

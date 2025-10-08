@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime, date
-from .. import models, schemas
-from ..dependencies import get_db, get_current_user
 
-router = APIRouter(
+from datetime import datetime, date
+from .models import User, UserRole, Group, Attendance
+from .dependencies import get_db, get_current_user
+from .schemas import AttendanceResponse, AttendanceCreate
+
+attend_router = APIRouter(
     prefix="/attendance",
     tags=["Attendance"]
 )
@@ -13,41 +15,41 @@ router = APIRouter(
 # ------------------------------
 # POST: Bitta kun uchun yo‘qlama qo‘shish
 # ------------------------------
-@router.post("/", response_model=List[schemas.AttendanceResponse])
+@attend_router.post("/", response_model=List[AttendanceResponse])
 def create_attendance(
     group_id: int = Body(...),
-    records: List[schemas.AttendanceCreate] = Body(...),
+    records: List[AttendanceCreate] = Body(...),
     date_: Optional[date] = Body(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    if current_user.role not in [models.UserRole.teacher, models.UserRole.admin, models.UserRole.manager]:
+    if current_user.role not in [UserRole.teacher, UserRole.admin, UserRole.manager]:
         raise HTTPException(status_code=403, detail="Not allowed to create attendance")
 
-    group = db.query(models.Group).filter(models.Group.id == group_id).first()
+    group = db.query(Group).filter(Group.id == group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    if current_user.role == models.UserRole.teacher and current_user not in group.teachers:
+    if current_user.role == UserRole.teacher and current_user not in group.teachers:
         raise HTTPException(status_code=403, detail="You can only add attendance for your groups")
 
     attendance_date = date_ or datetime.utcnow().date()
 
     # Shu kunga oldin yozilgan attendance mavjudligini tekshirish
-    existing = db.query(models.Attendance).filter(
-        models.Attendance.group_id == group_id,
-        models.Attendance.date == attendance_date
+    existing = db.query(Attendance).filter(
+        Attendance.group_id == group_id,
+        Attendance.date == attendance_date
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail=f"Attendance for {attendance_date} already exists")
 
     attendance_list = []
     for record in records:
-        student = db.query(models.User).filter(models.User.id == record.student_id).first()
+        student = db.query(User).filter(User.id == record.student_id).first()
         if not student:
             continue
 
-        attendance_entry = models.Attendance(
+        attendance_entry = Attendance(
             student_id=record.student_id,
             teacher_id=current_user.id,
             group_id=group_id,
@@ -67,18 +69,18 @@ def create_attendance(
 # ------------------------------
 # GET: Oy bo‘yicha hisobot (faqat saqlangan kunlar)
 # ------------------------------
-@router.get("/report/{group_id}")
+@attend_router.get("/report/{group_id}")
 def get_group_report(
     group_id: int,
     month: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    group = db.query(models.Group).filter(models.Group.id == group_id).first()
+    group = db.query(Group).filter(Group.id == group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    if current_user.role == models.UserRole.teacher and current_user not in group.teachers:
+    if current_user.role == UserRole.teacher and current_user not in group.teachers:
         raise HTTPException(status_code=403, detail="Not allowed to view this group's attendance")
 
     today = datetime.utcnow()
@@ -93,11 +95,11 @@ def get_group_report(
     students = group.students
 
     # Ushbu oy uchun attendance
-    attendances = db.query(models.Attendance).filter(
-        models.Attendance.group_id == group_id,
-        models.Attendance.date >= first_day,
-        models.Attendance.date <= last_day
-    ).order_by(models.Attendance.date.asc()).all()
+    attendances = db.query(Attendance).filter(
+        Attendance.group_id == group_id,
+        Attendance.date >= first_day,
+        Attendance.date <= last_day
+    ).order_by(Attendance.date.asc()).all()
 
     if not attendances:
         return {"day_list": [], "rows": [], "message": "Bu oyda dars mavjud emas"}

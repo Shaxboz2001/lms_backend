@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-from .. import models, schemas
-from ..dependencies import get_db, get_current_user  # JWT bilan get_current_user
+from .dependencies import get_db, get_current_user  # JWT bilan get_current_user
+from .schemas import GroupResponse, GroupCreate, UserResponse
+from .models import Group, User, UserRole
 
-router = APIRouter(
+groups_router = APIRouter(
     prefix="/groups",
     tags=["Groups"]
 )
@@ -12,17 +13,17 @@ router = APIRouter(
 # ------------------------------
 # GET all groups
 # ------------------------------
-@router.get("/", response_model=List[schemas.GroupResponse])
+@groups_router.get("/", response_model=List[GroupResponse])
 def get_groups(
         db: Session = Depends(get_db),
-        current_user: models.User = Depends(get_current_user)
+        current_user: User = Depends(get_current_user)
 ):
     # Role ga qarab guruhlarni olish
-    if current_user.role in [models.UserRole.admin, models.UserRole.manager]:
-        groups = db.query(models.Group).all()
-    elif current_user.role == models.UserRole.teacher:
+    if current_user.role in [UserRole.admin, UserRole.manager]:
+        groups = db.query(Group).all()
+    elif current_user.role == UserRole.teacher:
         groups = current_user.groups_as_teacher
-    elif current_user.role == models.UserRole.student:
+    elif current_user.role == UserRole.student:
         groups = current_user.groups_as_student
     else:
         groups = []
@@ -31,7 +32,7 @@ def get_groups(
     response = []
     for group in groups:
         response.append(
-            schemas.GroupResponse(
+            GroupResponse(
                 id=group.id,
                 name=group.name,
                 description=group.description,
@@ -46,33 +47,33 @@ def get_groups(
 # ------------------------------
 # CREATE group
 # ------------------------------
-@router.post("/", response_model=schemas.GroupResponse)
+@groups_router.post("/", response_model=GroupResponse)
 def create_group(
-        group: schemas.GroupCreate,
+        group: GroupCreate,
         db: Session = Depends(get_db),
-        current_user: models.User = Depends(get_current_user)
+        current_user: User = Depends(get_current_user)
 ):
     # Faqat admin va manager yangi guruh qo‘sha oladi
-    if current_user.role not in [models.UserRole.admin, models.UserRole.manager]:
+    if current_user.role not in [UserRole.admin, UserRole.manager]:
         raise HTTPException(status_code=403, detail="Not allowed to create groups")
 
-    new_group = models.Group(
+    new_group = Group(
         name=group.name,
         description=group.description
     )
 
     # Student va teacher larni qo‘shish
     if group.student_ids:
-        students = db.query(models.User).filter(
-            models.User.id.in_(group.student_ids),
-            models.User.role == models.UserRole.student
+        students = db.query(User).filter(
+            User.id.in_(group.student_ids),
+            User.role == UserRole.student
         ).all()
         new_group.students = students
 
     if group.teacher_ids:
-        teachers = db.query(models.User).filter(
-            models.User.id.in_(group.teacher_ids),
-            models.User.role == models.UserRole.teacher
+        teachers = db.query(User).filter(
+            User.id.in_(group.teacher_ids),
+            User.role == UserRole.teacher
         ).all()
         new_group.teachers = teachers
 
@@ -80,7 +81,7 @@ def create_group(
     db.commit()
     db.refresh(new_group)
 
-    return schemas.GroupResponse(
+    return GroupResponse(
         id=new_group.id,
         name=new_group.name,
         description=new_group.description,
@@ -92,21 +93,21 @@ def create_group(
 # ------------------------------
 # GET all students in a group
 # ------------------------------
-@router.get("/{group_id}/students/", response_model=List[schemas.UserResponse])
+@groups_router.get("/{group_id}/students/", response_model=List[UserResponse])
 def get_group_students(
         group_id: int,
         db: Session = Depends(get_db),
-        current_user: models.User = Depends(get_current_user)
+        current_user: User = Depends(get_current_user)
 ):
-    group = db.query(models.Group).filter(models.Group.id == group_id).first()
+    group = db.query(Group).filter(Group.id == group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
     # Role bilan tekshirish: teacher faqat o‘z guruhidagi o‘quvchilarni oladi
-    if current_user.role == models.UserRole.teacher and current_user not in group.teachers:
+    if current_user.role == UserRole.teacher and current_user not in group.teachers:
         raise HTTPException(status_code=403, detail="Not allowed to view students in this group")
-    elif current_user.role == models.UserRole.student:
+    elif current_user.role == UserRole.student:
         raise HTTPException(status_code=403, detail="Students cannot view other students")
 
     # O‘quvchilar ro‘yxatini qaytarish
-    return [schemas.UserResponse.from_orm(student) for student in group.students]
+    return [UserResponse.from_orm(student) for student in group.students]

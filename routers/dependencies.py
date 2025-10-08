@@ -2,7 +2,8 @@ from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
-from . import models, database
+from .database import SessionLocal
+from .models import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
@@ -10,7 +11,7 @@ SECRET_KEY = "2001"
 ALGORITHM = "HS256"
 
 def get_db():
-    db = database.SessionLocal()
+    db = SessionLocal()
     try:
         yield db
     finally:
@@ -29,7 +30,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except JWTError:
         raise credentials_exception
 
-    user = db.query(models.User).filter(models.User.id == int(user_id)).first()
+    user = db.query(User).filter(User.id == int(user_id)).first()
     if user is None:
         raise credentials_exception
     return user

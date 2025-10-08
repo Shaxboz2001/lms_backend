@@ -1,11 +1,12 @@
+import os
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
-import os
 
-# 🔹 .env ni yuklash
-env_path = os.path.join(os.path.dirname(__file__), ".env")
+# 🔹 backend/.env faylini yuklash
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # backend papka
+env_path = os.path.join(BASE_DIR, ".env")
 print(f"📁 Loading .env from: {env_path}")
 load_dotenv(env_path)
 
@@ -17,5 +18,3 @@ if not DATABASE_URL:
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-
-

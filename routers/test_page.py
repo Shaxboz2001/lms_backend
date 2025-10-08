@@ -2,20 +2,21 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime
-from .. import models, schemas
-from ..dependencies import get_db
+from .dependencies import get_db
 from .auth import get_current_user
+from .models import UserRole, Test, User, Question, Option, group_students, StudentAnswer
+from .schemas import TestResponse, TestCreate, TestSubmit
 
-router = APIRouter(prefix="/tests", tags=["Tests"])
+tests_router = APIRouter(prefix="/tests", tags=["Tests"])
 
 
 # ✅ Test yaratish (Teacher)
-@router.post("/", response_model=schemas.TestResponse)
-def create_test(test: schemas.TestCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    if current_user.role != models.UserRole.teacher:
+@tests_router.post("/", response_model=TestResponse)
+def create_test(test: TestCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != UserRole.teacher:
         raise HTTPException(status_code=403, detail="Faqat teacher test yaratishi mumkin")
 
-    db_test = models.Test(
+    db_test = Test(
         title=test.title,
         description=test.description,
         created_by=current_user.id,  # testni kim yaratgan
@@ -27,7 +28,7 @@ def create_test(test: schemas.TestCreate, db: Session = Depends(get_db), current
     db.refresh(db_test)
 
     for q in test.questions:
-        db_question = models.Question(
+        db_question = Question(
             test_id=db_test.id,
             text=q.text
         )
@@ -36,7 +37,7 @@ def create_test(test: schemas.TestCreate, db: Session = Depends(get_db), current
         db.refresh(db_question)
 
         for opt in q.options:
-            db_option = models.Option(
+            db_option = Option(
                 question_id=db_question.id,
                 text=opt.text,
                 is_correct=int(opt.is_correct)
@@ -48,39 +49,39 @@ def create_test(test: schemas.TestCreate, db: Session = Depends(get_db), current
 
 
 # ✅ Testlarni olish (Teacher yoki Student)
-@router.get("/", response_model=List[schemas.TestResponse])
-def get_my_tests(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    if current_user.role == models.UserRole.student:
+@tests_router.get("/", response_model=List[TestResponse])
+def get_my_tests(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role == UserRole.student:
         group_ids = [g.id for g in current_user.groups_as_student]
-    elif current_user.role == models.UserRole.teacher:
+    elif current_user.role == UserRole.teacher:
         group_ids = [g.id for g in current_user.groups_as_teacher]
-    elif current_user.role in [models.UserRole.admin, models.UserRole.manager]:
-        return db.query(models.Test).all()
+    elif current_user.role in [UserRole.admin, UserRole.manager]:
+        return db.query(Test).all()
     else:
         return []
 
     if not group_ids:
         return []
-    tests = db.query(models.Test).filter(models.Test.group_id.in_(group_ids)).all()
+    tests = db.query(Test).filter(Test.group_id.in_(group_ids)).all()
     return tests
 
 
 # ✅ Testni ID orqali olish (Student yechishi uchun)
-@router.get("/{test_id}", response_model=schemas.TestResponse)
+@tests_router.get("/{test_id}", response_model=TestResponse)
 def get_test(
     test_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    test = db.query(models.Test).filter(models.Test.id == test_id).first()
+    test = db.query(Test).filter(Test.id == test_id).first()
     if not test:
         raise HTTPException(status_code=404, detail="Test topilmadi")
 
     # 👇 Student testni ko‘ra oladimi?
-    if current_user.role == models.UserRole.student:
+    if current_user.role == UserRole.student:
         student_groups = (
-            db.query(models.group_students.c.group_id)
-            .filter(models.group_students.c.student_id == current_user.id)
+            db.query(group_students.c.group_id)
+            .filter(group_students.c.student_id == current_user.id)
             .all()
         )
         student_group_ids = [g[0] for g in student_groups]
@@ -92,27 +93,27 @@ def get_test(
 
 
 # ✅ Testni javobini yuborish (Student)
-@router.post("/{test_id}/submit")
+@tests_router.post("/{test_id}/submit")
 def submit_test(
     test_id: int,
-    answers: schemas.TestSubmit,
+    answers: TestSubmit,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    test = db.query(models.Test).filter(models.Test.id == test_id).first()
+    test = db.query(Test).filter(Test.id == test_id).first()
     if not test:
         raise HTTPException(status_code=404, detail="Test topilmadi")
 
-    if current_user.role != models.UserRole.student:
+    if current_user.role != UserRole.student:
         raise HTTPException(status_code=403, detail="Faqat studentlar test topshira oladi")
 
     score = 0
     for ans in answers.answers:
-        option = db.query(models.Option).filter(models.Option.id == ans.option_id).first()
+        option = db.query(Option).filter(Option.id == ans.option_id).first()
         if option and option.is_correct:
             score += 1
 
-        db_answer = models.StudentAnswer(
+        db_answer = StudentAnswer(
             student_id=current_user.id,
             question_id=ans.question_id,
             selected_option_id=ans.option_id
@@ -121,52 +122,52 @@ def submit_test(
 
     db.commit()
 
-    total = db.query(models.Question).filter(models.Question.test_id == test_id).count()
+    total = db.query(Question).filter(Question.test_id == test_id).count()
     return {"student_name": current_user.full_name, "score": score, "total": total}
 
 
 # ✅ Teacher uchun test natijalari
-@router.get("/{test_id}/results")
+@tests_router.get("/{test_id}/results")
 def get_test_results(
     test_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     # 1️⃣ Testni topamiz
-    test = db.query(models.Test).filter(models.Test.id == test_id).first()
+    test = db.query(Test).filter(Test.id == test_id).first()
     if not test:
         raise HTTPException(status_code=404, detail="Test topilmadi")
 
     # 2️⃣ Faqat testni yaratgan o‘qituvchi ko‘ra oladi
-    if current_user.role != models.UserRole.teacher or test.created_by != current_user.id:
+    if current_user.role != UserRole.teacher or test.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Siz bu testning natijalarini ko‘ra olmaysiz")
 
     # 3️⃣ Student natijalari
     results = (
         db.query(
-            models.StudentAnswer.student_id,
-            models.User.full_name,
-            models.StudentAnswer.submitted_at
+            StudentAnswer.student_id,
+            User.full_name,
+            StudentAnswer.submitted_at
         )
-        .join(models.User, models.User.id == models.StudentAnswer.student_id)
-        .filter(models.StudentAnswer.question_id.in_(
-            db.query(models.Question.id).filter(models.Question.test_id == test_id)
+        .join(User, User.id == StudentAnswer.student_id)
+        .filter(StudentAnswer.question_id.in_(
+            db.query(Question.id).filter(Question.test_id == test_id)
         ))
-        .distinct(models.StudentAnswer.student_id)
+        .distinct(StudentAnswer.student_id)
         .all()
     )
 
     # 4️⃣ Har bir student uchun ball hisoblash
     output = []
-    total = db.query(models.Question).filter(models.Question.test_id == test_id).count()
+    total = db.query(Question).filter(Question.test_id == test_id).count()
 
     for res in results:
         student_answers = (
-            db.query(models.StudentAnswer)
+            db.query(StudentAnswer)
             .filter(
-                models.StudentAnswer.student_id == res.student_id,
-                models.StudentAnswer.question_id.in_(
-                    db.query(models.Question.id).filter(models.Question.test_id == test_id)
+                StudentAnswer.student_id == res.student_id,
+                StudentAnswer.question_id.in_(
+                    db.query(Question.id).filter(Question.test_id == test_id)
                 )
             )
             .all()
@@ -174,7 +175,7 @@ def get_test_results(
 
         correct = 0
         for ans in student_answers:
-            option = db.query(models.Option).filter(models.Option.id == ans.selected_option_id).first()
+            option = db.query(Option).filter(Option.id == ans.selected_option_id).first()
             if option and option.is_correct:
                 correct += 1
 

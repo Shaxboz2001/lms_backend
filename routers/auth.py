@@ -5,10 +5,11 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from .schemas import UserCreate, UserResponse
+from .database import SessionLocal
+from .models import User
 
-from .. import models, schemas, database
-
-router = APIRouter(prefix="/auth", tags=["Auth"])
+auth_router = APIRouter(prefix="/auth", tags=["Auth"])
 
 # ------------------------------
 # Sozlamalar
@@ -24,7 +25,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 # DB sessiya
 # ------------------------------
 def get_db():
-    db = database.SessionLocal()
+    db = SessionLocal()
     try:
         yield db
     finally:
@@ -42,14 +43,14 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
 # ------------------------------
 # Register
 # ------------------------------
-@router.post("/register", response_model=schemas.UserResponse)
-def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    db_user = db.query(models.User).filter(models.User.username == user.username).first()
+@auth_router.post("/register", response_model=UserResponse)
+def register(user: UserCreate, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="❌ Username already exists")
 
     hashed_pw = pwd_context.hash(user.password)
-    new_user = models.User(username=user.username, password=hashed_pw, role=user.role)
+    new_user = User(username=user.username, password=hashed_pw, role=user.role)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
@@ -62,9 +63,9 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
-@router.post("/login")
+@auth_router.post("/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.username == request.username).first()
+    user = db.query(User).filter(User.username == request.username).first()
     if not user or not pwd_context.verify(request.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -96,7 +97,7 @@ def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    user = db.query(models.User).filter(models.User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
     return user
@@ -104,6 +105,6 @@ def get_current_user(
 # ------------------------------
 # Current user endpoint (test)
 # ------------------------------
-@router.get("/me", response_model=schemas.UserResponse)
-def read_users_me(current_user: models.User = Depends(get_current_user)):
+@auth_router.get("/me", response_model=UserResponse)
+def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
