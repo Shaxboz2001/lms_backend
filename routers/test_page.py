@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from .dependencies import get_db
 from .auth import get_current_user
-from .models import UserRole, Test, User, Question, Option, group_students, StudentAnswer
+from .models import UserRole, Test, User, Question, Option, group_students, StudentAnswer, Group
 from .schemas import TestResponse, TestCreate, TestSubmit
 
 tests_router = APIRouter(prefix="/tests", tags=["Tests"])
@@ -157,11 +157,12 @@ def get_test_results(
         .all()
     )
 
-    # 4️⃣ Har bir student uchun ball hisoblash
+    # 4️⃣ Har bir student uchun ball va guruh nomi hisoblash
     output = []
     total = db.query(Question).filter(Question.test_id == test_id).count()
 
     for res in results:
+        # Studentning barcha javoblarini olish
         student_answers = (
             db.query(StudentAnswer)
             .filter(
@@ -173,17 +174,29 @@ def get_test_results(
             .all()
         )
 
+        # To‘g‘ri javoblar soni
         correct = 0
         for ans in student_answers:
             option = db.query(Option).filter(Option.id == ans.selected_option_id).first()
             if option and option.is_correct:
                 correct += 1
 
+        # Studentning birinchi guruhini olish
+        group_id = db.query(group_students.c.group_id).filter(
+            group_students.c.student_id == res.student_id
+        ).first()
+        group_name = None
+        if group_id:
+            group = db.query(Group).filter(Group.id == group_id[0]).first()
+            group_name = group.name if group else None
+
         output.append({
             "student_name": res.full_name,
+            "group_name": group_name,
             "score": correct,
             "total": total,
             "submitted_at": res.submitted_at.strftime("%Y-%m-%d %H:%M:%S") if res.submitted_at else None
         })
 
     return {"test_name": test.title, "results": output}
+
