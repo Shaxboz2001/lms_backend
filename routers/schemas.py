@@ -54,6 +54,7 @@ class UserCreate(BaseModel):
     status: Optional[StudentStatus] = StudentStatus.studying  # <-- qo‘shildi
     age: Optional[int] = None
     group_id: Optional[int] = None
+    teacher_id: Optional[int] = None  # optional
 
 
 
