@@ -51,6 +51,8 @@ class UserCreate(BaseModel):
     address: Optional[str] = None
     subject: Optional[str] = None
     fee: Optional[int] = 0
+    status: Optional[StudentStatus] = StudentStatus.studying  # <-- qo‘shildi
+    age: Optional[int] = None
 
 
 

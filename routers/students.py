@@ -34,13 +34,13 @@ def create_student(
     new_student = User(
         username=student.username,
         full_name=student.full_name,
-        password=hashed_password,  # 🔥 bu yerda endi hashlangan parol
+        password=hashed_password,
         phone=student.phone,
         address=student.address,
         role=UserRole.student,
         subject=student.subject,
         fee=student.fee,
-        status=student.status or StudentStatus.studying,
+        status=StudentStatus.studying,  # <-- doim default
         age=student.age,
         group_id=student.group_id,
         teacher_id=student.teacher_id
