@@ -37,13 +37,13 @@ def create_student(
         password=hashed_password,
         phone=student.phone,
         address=student.address,
-        role=UserRole.student,
+        role=UserRole.student,  # role har doim student
         subject=student.subject,
         fee=student.fee,
-        status=StudentStatus.studying,  # <-- doim default
+        status=student.status or StudentStatus.studying,
         age=student.age,
-        group_id=student.group_id,
-        teacher_id=student.teacher_id
+        group_id=getattr(student, "group_id", None),  # optional chaqirish
+        teacher_id=getattr(student, "teacher_id", None)  # optional chaqirish
     )
 
     db.add(new_student)
