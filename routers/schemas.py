@@ -42,9 +42,16 @@ class UserBase(BaseModel):
         from_attributes = True
 
 
-class UserCreate(UserBase):
+class UserCreate(BaseModel):
     username: str
-    password: Optional[str] = "1234"        # ✅ default password
+    password: str
+    role: str
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    subject: Optional[str] = None
+    fee: Optional[int] = 0
+
 
 
 class UserResponse(UserBase):

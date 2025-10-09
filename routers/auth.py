@@ -50,11 +50,21 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="❌ Username already exists")
 
     hashed_pw = pwd_context.hash(user.password)
-    new_user = User(username=user.username, password=hashed_pw, role=user.role)
+    new_user = User(
+        username=user.username,
+        password=hashed_pw,
+        role=user.role,
+        full_name=user.full_name,
+        phone=user.phone,
+        address=user.address,
+        subject=user.subject,
+        fee=user.fee,
+    )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     return new_user
+
 
 # ------------------------------
 # Login
