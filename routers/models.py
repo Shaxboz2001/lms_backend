@@ -138,7 +138,7 @@ class Test(Base):
     description = Column(String)
     created_by = Column(Integer, ForeignKey("users.id"))
     group_id = Column(Integer, ForeignKey("groups.id"))
-
+    created_at = Column(DateTime, default=datetime.utcnow)  # ✅ shu yer
     group = relationship("Group", back_populates="tests")
     questions = relationship("Question", back_populates="test")
 
