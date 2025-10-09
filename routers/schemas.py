@@ -53,6 +53,7 @@ class UserCreate(BaseModel):
     fee: Optional[int] = 0
     status: Optional[StudentStatus] = StudentStatus.studying  # <-- qo‘shildi
     age: Optional[int] = None
+    group_id: Optional[int] = None
 
 
 
