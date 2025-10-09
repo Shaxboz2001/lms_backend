@@ -111,3 +111,25 @@ def get_group_students(
 
     # O‘quvchilar ro‘yxatini qaytarish
     return [UserResponse.from_orm(student) for student in group.students]
+
+# ------------------------------
+# DELETE group
+# ------------------------------
+@groups_router.delete("/{group_id}")
+def delete_group(
+        group_id: int,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    # Faqat admin va manager o‘chira oladi
+    if current_user.role not in [UserRole.admin, UserRole.manager]:
+        raise HTTPException(status_code=403, detail="❌ Sizda o‘chirish huquqi yo‘q")
+
+    group = db.query(Group).filter(Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="❌ Guruh topilmadi")
+
+    # Guruhni o‘chirish
+    db.delete(group)
+    db.commit()
+    return {"message": f"✅ Guruh '{group.name}' muvaffaqiyatli o‘chirildi"}
