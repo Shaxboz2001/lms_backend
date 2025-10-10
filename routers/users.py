@@ -61,3 +61,14 @@ def create_user(
     db.commit()
     db.refresh(new_user)
     return new_user
+
+@users_router.get("/me")
+def get_my_profile(current_user: User = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "full_name": current_user.full_name,
+        "email": current_user.email,
+        "role": current_user.role,
+        "avatar_url": current_user.avatar_url,
+        "created_at": current_user.created_at
+    }
