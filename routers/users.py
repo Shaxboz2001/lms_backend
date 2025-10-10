@@ -66,9 +66,15 @@ def create_user(
 def get_my_profile(current_user: User = Depends(get_current_user)):
     return {
         "id": current_user.id,
+        "username": current_user.username,
         "full_name": current_user.full_name,
-        "email": current_user.email,
         "role": current_user.role,
-        "avatar_url": current_user.avatar_url,
-        "created_at": current_user.created_at
+        "phone": current_user.phone,
+        "address": current_user.address,
+        "age": current_user.age,
+        "group_id": current_user.group_id,
+        "subject": current_user.subject,
+        "fee": current_user.fee,
+        "status": current_user.status,
     }
+
