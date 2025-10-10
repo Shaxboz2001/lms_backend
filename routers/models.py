@@ -91,6 +91,7 @@ class Group(Base):
     payments = relationship("Payment", back_populates="group")
     tests = relationship("Test", back_populates="group")
 
+
 # ==============================
 # Payment model
 # ==============================

@@ -118,3 +118,16 @@ def update_user(
     db.refresh(user)
     return user
 
+
+@users_router.get("/{user_id}", response_model=UserResponse)
+def get_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Faqat o‘z profilini yoki admin boshqa foydalanuvchini ko‘rishi mumkin
+    if current_user.id != user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="You are not allowed to view this profile")
+
+    return user
+
