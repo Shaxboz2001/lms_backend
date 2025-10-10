@@ -103,6 +103,8 @@ def update_user(
 
     # Agar password bor bo'lsa -> hash qilamiz
     if "password" in update_data and update_data["password"]:
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         update_data["password"] = pwd_context.hash(update_data["password"])
     elif "password" in update_data and not update_data["password"]:
         # bo'sh parol jo'natilsa, uni inobatga olmang (ya'ni o'chiring)
