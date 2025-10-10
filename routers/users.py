@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from typing import List
 from .dependencies import get_db, get_current_user  # JWT bilan get_current_user
-from .schemas import UserResponse, RoleEnum
+from .schemas import UserResponse, RoleEnum, UserUpdate
 from .models import User, UserRole
 
 users_router = APIRouter(
@@ -77,4 +77,42 @@ def get_my_profile(current_user: User = Depends(get_current_user)):
         "fee": current_user.fee,
         "status": current_user.status,
     }
+
+@users_router.put("/{user_id}", response_model=UserResponse)
+def update_user(
+    user_id: int,
+    user_update: UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Ruxsat: faqat o'z profilini tahrirlash yoki admin/manager
+    if current_user.id != user_id and current_user.role not in [UserRole.admin, UserRole.manager]:
+        raise HTTPException(status_code=403, detail="Not allowed to update this user")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    update_data = user_update.dict(exclude_unset=True)
+
+    # Username uniqueness tekshiruvi (agar username kelgan bo'lsa)
+    if "username" in update_data and update_data["username"]:
+        exists = db.query(User).filter(User.username == update_data["username"], User.id != user_id).first()
+        if exists:
+            raise HTTPException(status_code=400, detail="Username already exists")
+
+    # Agar password bor bo'lsa -> hash qilamiz
+    if "password" in update_data and update_data["password"]:
+        update_data["password"] = pwd_context.hash(update_data["password"])
+    elif "password" in update_data and not update_data["password"]:
+        # bo'sh parol jo'natilsa, uni inobatga olmang (ya'ni o'chiring)
+        update_data.pop("password", None)
+
+    # Yangilash
+    for key, value in update_data.items():
+        setattr(user, key, value)
+
+    db.commit()
+    db.refresh(user)
+    return user
 

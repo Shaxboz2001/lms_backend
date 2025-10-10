@@ -204,3 +204,5 @@ class StudentCourse(Base):
 
     student = relationship("User", back_populates="enrolled_courses")
     course = relationship("Course", back_populates="students")
+
+
