@@ -2,11 +2,12 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime,  timezone, timedelta
 from .dependencies import get_db
 from .auth import get_current_user
 from .models import UserRole, Test, User, Question, Option, group_students, StudentAnswer, Group
 from .schemas import TestResponse, TestCreate, TestSubmit
+
 
 tests_router = APIRouter(prefix="/tests", tags=["Tests"])
 
@@ -108,6 +109,8 @@ def submit_test(
     if current_user.role != UserRole.student:
         raise HTTPException(status_code=403, detail="Faqat studentlar test topshira oladi")
 
+    tashkent_time = datetime.now(timezone(timedelta(hours=5)))
+
     score = 0
     for ans in answers.answers:
         option = db.query(Option).filter(Option.id == ans.option_id).first()
@@ -117,14 +120,20 @@ def submit_test(
         db_answer = StudentAnswer(
             student_id=current_user.id,
             question_id=ans.question_id,
-            selected_option_id=ans.option_id
+            selected_option_id=ans.option_id,
+            submitted_at=tashkent_time  # ✅ Toshkent vaqti
         )
         db.add(db_answer)
 
     db.commit()
 
     total = db.query(Question).filter(Question.test_id == test_id).count()
-    return {"student_name": current_user.full_name, "score": score, "total": total}
+    return {
+        "student_name": current_user.full_name,
+        "score": score,
+        "total": total,
+        "submitted_at": tashkent_time.strftime("%Y-%m-%d %H:%M:%S")
+    }
 
 
 @tests_router.get("/{test_id}/results")
