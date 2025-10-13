@@ -1,5 +1,6 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from datetime import datetime
 from .dependencies import get_db
@@ -126,7 +127,6 @@ def submit_test(
     return {"student_name": current_user.full_name, "score": score, "total": total}
 
 
-# ✅ Teacher uchun test natijalari
 @tests_router.get("/{test_id}/results")
 def get_test_results(
     test_id: int,
@@ -142,60 +142,64 @@ def get_test_results(
     if current_user.role != UserRole.teacher or test.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Siz bu testning natijalarini ko‘ra olmaysiz")
 
-    # 3️⃣ Student natijalari
-    results = (
+    # 3️⃣ Testdagi savollar soni
+    total_questions = db.query(Question).filter(Question.test_id == test_id).count()
+
+    # 4️⃣ Studentlarning barcha urinishlarini olish
+    attempts = (
         db.query(
             StudentAnswer.student_id,
             User.full_name,
-            StudentAnswer.submitted_at
+            func.date_trunc('second', StudentAnswer.submitted_at).label("attempt_time")
         )
         .join(User, User.id == StudentAnswer.student_id)
-        .filter(StudentAnswer.question_id.in_(
-            db.query(Question.id).filter(Question.test_id == test_id)
-        ))
-        .distinct(StudentAnswer.student_id)
+        .filter(
+            StudentAnswer.question_id.in_(
+                db.query(Question.id).filter(Question.test_id == test_id)
+            )
+        )
+        .distinct(StudentAnswer.student_id, func.date_trunc('second', StudentAnswer.submitted_at))
         .all()
     )
 
-    # 4️⃣ Har bir student uchun ball va guruh nomi hisoblash
     output = []
-    total = db.query(Question).filter(Question.test_id == test_id).count()
 
-    for res in results:
-        # Studentning barcha javoblarini olish
+    for attempt in attempts:
+        # Har bir studentning aynan shu urinishdagi javoblarini olish
         student_answers = (
             db.query(StudentAnswer)
             .filter(
-                StudentAnswer.student_id == res.student_id,
+                StudentAnswer.student_id == attempt.student_id,
                 StudentAnswer.question_id.in_(
                     db.query(Question.id).filter(Question.test_id == test_id)
-                )
+                ),
+                func.date_trunc('second', StudentAnswer.submitted_at) == attempt.attempt_time
             )
             .all()
         )
 
-        # To‘g‘ri javoblar soni
+        # To‘g‘ri javoblarni hisoblash
         correct = 0
         for ans in student_answers:
             option = db.query(Option).filter(Option.id == ans.selected_option_id).first()
             if option and option.is_correct:
                 correct += 1
 
-        # Studentning birinchi guruhini olish
-        group_id = db.query(group_students.c.group_id).filter(
-            group_students.c.student_id == res.student_id
-        ).first()
-        group_name = None
-        if group_id:
-            group = db.query(Group).filter(Group.id == group_id[0]).first()
-            group_name = group.name if group else None
+        # Studentning guruhi
+        group_info = (
+            db.query(Group.name)
+            .join(group_students, group_students.c.group_id == Group.id)
+            .filter(group_students.c.student_id == attempt.student_id)
+            .first()
+        )
+        group_name = group_info[0] if group_info else None
 
         output.append({
-            "student_name": res.full_name,
+            "student_name": attempt.full_name,
             "group_name": group_name,
             "score": correct,
-            "total": total,
-            "submitted_at": res.submitted_at.strftime("%Y-%m-%d %H:%M:%S") if res.submitted_at else None
+            "total": total_questions,
+            "submitted_at": attempt.attempt_time.strftime("%Y-%m-%d %H:%M:%S")
         })
 
     return {"test_name": test.title, "results": output}
