@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from .models import User, StudentStatus, Group, Payment, Attendance, UserRole, StudentAnswer, group_students, group_teachers
+from .models import User, StudentStatus, Group, Payment, Attendance, UserRole, StudentAnswer, group_students, \
+    group_teachers, Question, Option
 from .dependencies import get_db, get_current_user
 
 dashboard_router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
@@ -87,27 +88,36 @@ def get_dashboard_stats(
             .filter(Attendance.student_id == student.id, Attendance.status == "present")
             .count()
         )
-
         total_lessons = (
             db.query(Attendance)
             .filter(Attendance.student_id == student.id)
             .count()
         )
+        missed = total_lessons - attended if total_lessons else 0
 
-        missed = total_lessons - attended if total_lessons > 0 else 0
+        # 3️⃣ Test natijalari hisoblash (StudentAnswer orqali)
+        questions = db.query(Question).all()
+        test_ids = {q.test_id for q in questions}
 
-        # 3️⃣ Test natijalari (agar mavjud bo‘lsa)
-        # ⚡ Bu joyda StudentAnswer emas, balki TestResult'dan foydalanamiz
-        tests = (
-            db.query(StudentAnswer)
-            .filter(StudentAnswer.student_id == student.id)
-            .order_by(StudentAnswer.id.asc())
-            .all()
-        )
+        results = []
+        for test_id in test_ids:
+            total_q = db.query(Question).filter(Question.test_id == test_id).count()
+            correct = (
+                db.query(StudentAnswer)
+                .join(Option, StudentAnswer.selected_option_id == Option.id)
+                .join(Question, StudentAnswer.question_id == Question.id)
+                .filter(
+                    StudentAnswer.student_id == student.id,
+                    Question.test_id == test_id,
+                    Option.is_correct == 1
+                )
+                .count()
+            )
+            score = round((correct / total_q) * 100, 2) if total_q else 0
+            results.append(score)
 
-        test_scores = [t.score for t in tests if t.score is not None]
-        avg_score = round(sum(test_scores) / len(test_scores), 2) if test_scores else 0
-        last_score = test_scores[-1] if test_scores else 0
+        avg_score = round(sum(results) / len(results), 2) if results else 0
+        last_score = results[-1] if results else 0
 
         # 4️⃣ Yakuniy statistika
         stats = {
@@ -123,7 +133,6 @@ def get_dashboard_stats(
             "tests": {
                 "average": avg_score,
                 "last": last_score,
-                "taken": len(tests),
             },
         }
 
