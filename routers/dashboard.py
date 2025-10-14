@@ -137,10 +137,10 @@ def get_dashboard_stats(
             },
             "attendance": {
                 "attended": db.query(Attendance)
-                .filter(Attendance.student_id == student.id, Attendance.status == True)
+                .filter(Attendance.student_id == student.id, Attendance.status == "present")
                 .count(),
                 "missed": db.query(Attendance)
-                .filter(Attendance.student_id == student.id, Attendance.status == False)
+                .filter(Attendance.student_id == student.id, Attendance.status == "absent")
                 .count(),
             },
             "tests": {
