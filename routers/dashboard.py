@@ -84,7 +84,7 @@ def get_dashboard_stats(
         # 2️⃣ Qatnashgan va qatnashmagan darslar
         attended = (
             db.query(Attendance)
-            .filter(Attendance.student_id == student.id, Attendance.status == True)
+            .filter(Attendance.student_id == student.id, Attendance.status == "present")
             .count()
         )
 
