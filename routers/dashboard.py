@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from .models import User, StudentStatus, Group, Payment, Attendance, UserRole, StudentAnswer
 from .dependencies import get_db, get_current_user
@@ -27,11 +28,11 @@ def get_dashboard_stats(
         groups_count = db.query(Group).count()
 
         total_payments = db.query(Payment).with_entities(
-            db.func.sum(Payment.amount)
+            func.sum(Payment.amount)
         ).scalar() or 0
         today_payments = db.query(Payment).filter(
-            db.func.date(Payment.created_at) == db.func.current_date()
-        ).with_entities(db.func.sum(Payment.amount)).scalar() or 0
+            func.date(Payment.created_at) == func.current_date()
+        ).with_entities(func.sum(Payment.amount)).scalar() or 0
 
         stats = {
             "students": {
