@@ -82,53 +82,66 @@ def get_dashboard_stats(
         if not student:
             raise HTTPException(status_code=404, detail="Student topilmadi")
 
-        # 2️⃣ Qatnashgan va qatnashmagan darslar
-        attended = (
-            db.query(Attendance)
-            .filter(Attendance.student_id == student.id, Attendance.status == "present")
-            .count()
-        )
-        total_lessons = (
-            db.query(Attendance)
-            .filter(Attendance.student_id == student.id)
-            .count()
-        )
-        missed = total_lessons - attended if total_lessons else 0
-
-        # 3️⃣ Test natijalari hisoblash (StudentAnswer orqali)
-        questions = db.query(Question).all()
-        test_ids = {q.test_id for q in questions}
+        # 2️⃣ Test ID’larni olish
+        test_ids = [q.test_id for q in db.query(Question.test_id).distinct().all()]
 
         results = []
+
         for test_id in test_ids:
+            # 3️⃣ Testdagi savollar soni
             total_q = db.query(Question).filter(Question.test_id == test_id).count()
+            if total_q == 0:
+                continue
+
+            # 4️⃣ Studentning eng so‘nggi topshirgan vaqti
+            last_attempt = (
+                db.query(func.max(StudentAnswer.submitted_at))
+                .join(Question, StudentAnswer.question_id == Question.id)
+                .filter(
+                    StudentAnswer.student_id == student.id,
+                    Question.test_id == test_id
+                )
+                .scalar()
+            )
+            if not last_attempt:
+                continue  # student bu testni hali ishlamagan bo‘lishi mumkin
+
+            # 5️⃣ Faqat eng so‘nggi urinishdagi javoblarni olish
             correct = (
-                db.query(StudentAnswer)
+                db.query(func.count(StudentAnswer.id))
                 .join(Option, StudentAnswer.selected_option_id == Option.id)
                 .join(Question, StudentAnswer.question_id == Question.id)
                 .filter(
                     StudentAnswer.student_id == student.id,
                     Question.test_id == test_id,
-                    Option.is_correct == 1
+                    Option.is_correct == True,
+                    func.date_trunc('second', StudentAnswer.submitted_at)
+                    == func.date_trunc('second', last_attempt)
                 )
-                .count()
+                .scalar()
             )
+
+            # 6️⃣ Test natijasini hisoblash
             score = round((correct / total_q) * 100, 2) if total_q else 0
             results.append(score)
 
+        # 7️⃣ O‘rtacha va oxirgi ballni hisoblash
         avg_score = round(sum(results) / len(results), 2) if results else 0
         last_score = results[-1] if results else 0
 
-        # 4️⃣ Yakuniy statistika
+        # 8️⃣ Yakuniy statistika
         stats = {
             "profile": {
                 "full_name": student.full_name,
                 "phone": student.phone,
             },
             "attendance": {
-                "attended": attended,
-                "missed": missed,
-                "total": total_lessons,
+                "attended": db.query(Attendance)
+                .filter(Attendance.student_id == student.id, Attendance.status == True)
+                .count(),
+                "missed": db.query(Attendance)
+                .filter(Attendance.student_id == student.id, Attendance.status == False)
+                .count(),
             },
             "tests": {
                 "average": avg_score,
