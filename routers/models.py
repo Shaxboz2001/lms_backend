@@ -23,7 +23,7 @@ class StudentStatus(str, enum.Enum):
     graduated = "graduated"
 
 # ==============================
-# User model
+# User models
 # ==============================
 class User(Base):
     __tablename__ = "users"

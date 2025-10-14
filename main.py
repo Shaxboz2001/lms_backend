@@ -1,6 +1,8 @@
 import uvicorn
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
+
+from lms.backend.routers import dashboard_router
 from routers.database import  engine, Base
 from routers import (
     auth_router,
@@ -42,6 +44,7 @@ app.include_router(tests_router)
 app.include_router(students_router)
 app.include_router(teachers_router)
 app.include_router(users_router)
+app.include_router(dashboard_router)
 
 
 

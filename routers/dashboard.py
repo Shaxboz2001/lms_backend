@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from models import User, StudentStatus, Group, Payment, Attendance, TestResult, UserRole
+
+from lms.backend.routers.models import StudentAnswer
+from models import User, StudentStatus, Group, Payment, Attendance, UserRole
 from dependencies import get_db, get_current_user
 
 dashboard_router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
@@ -64,41 +66,61 @@ def get_dashboard_stats(
     # STUDENT statistikasi
     # -------------------------
     elif role == UserRole.student:
-        student = db.query(User).filter(User.role == "student").filter(User.user_id == current_user.id).first()
+        # 1️⃣ Studentni topish
+        student = (
+            db.query(User)
+            .filter(User.role == UserRole.student)
+            .filter(User.id == current_user.id)
+            .first()
+        )
         if not student:
-            raise HTTPException(status_code=404, detail="Student not found")
+            raise HTTPException(status_code=404, detail="Student topilmadi")
 
-        attended = db.query(Attendance).filter(
-            Attendance.student_id == student.id,
-            Attendance.status == True
-        ).count()
+        # 2️⃣ Qatnashgan va qatnashmagan darslar
+        attended = (
+            db.query(Attendance)
+            .filter(Attendance.student_id == student.id, Attendance.status == True)
+            .count()
+        )
 
-        total_lessons = db.query(Attendance).filter(
-            Attendance.student_id == student.id
-        ).count()
+        total_lessons = (
+            db.query(Attendance)
+            .filter(Attendance.student_id == student.id)
+            .count()
+        )
 
-        missed = total_lessons - attended
+        missed = total_lessons - attended if total_lessons else 0
 
-        tests = db.query(TestResult).filter(TestResult.student_id == student.id).all()
+        # 3️⃣ Test natijalari (agar mavjud bo‘lsa)
+        tests = (
+            db.query(StudentAnswer)
+            .filter(StudentAnswer.student_id == student.id)
+            .order_by(StudentAnswer.id.asc())
+            .all()
+        )
+
         test_scores = [t.score for t in tests]
-        avg_score = round(sum(test_scores) / len(test_scores), 2) if test_scores else None
-        last_score = test_scores[-1] if test_scores else None
+        avg_score = round(sum(test_scores) / len(test_scores), 2) if test_scores else 0
+        last_score = test_scores[-1] if test_scores else 0
 
+        # 4️⃣ Yakuniy statistika
         stats = {
+            "profile": {
+                "full_name": student.full_name,
+                "phone": student.phone,
+            },
             "attendance": {
                 "attended": attended,
                 "missed": missed,
-                "total": total_lessons
+                "total": total_lessons,
             },
             "tests": {
                 "average": avg_score,
-                "last": last_score
+                "last": last_score,
             },
-            "profile": {
-                "full_name": current_user.full_name,
-                "phone": current_user.phone
-            }
         }
+
+        return stats
 
     else:
         raise HTTPException(status_code=403, detail="Role not supported")
