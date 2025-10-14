@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from models import User, StudentStatus, Group, Payment, Attendance, UserRole, StudentAnswer
-from dependencies import get_db, get_current_user
+from .models import User, StudentStatus, Group, Payment, Attendance, UserRole, StudentAnswer
+from .dependencies import get_db, get_current_user
 
 dashboard_router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
