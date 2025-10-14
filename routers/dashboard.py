@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from .models import User, StudentStatus, Group, Payment, Attendance, UserRole, StudentAnswer
+from .models import User, StudentStatus, Group, Payment, Attendance, UserRole, StudentAnswer, group_students, group_teachers
 from .dependencies import get_db, get_current_user
 
 dashboard_router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
@@ -50,7 +50,12 @@ def get_dashboard_stats(
     # TEACHER statistikasi
     # -------------------------
     elif role == UserRole.teacher:
-        teacher_groups = db.query(Group).filter(Group.teacher_id == current_user.id).all()
+        teacher_groups = (
+            db.query(Group)
+            .join(group_teachers, group_teachers.c.group_id == Group.id)
+            .filter(group_teachers.c.teacher_id == current_user.id)
+            .all()
+        )
         student_ids = [s.id for g in teacher_groups for s in g.students]
         total_students = len(student_ids)
 
@@ -89,9 +94,10 @@ def get_dashboard_stats(
             .count()
         )
 
-        missed = total_lessons - attended if total_lessons else 0
+        missed = total_lessons - attended if total_lessons > 0 else 0
 
         # 3️⃣ Test natijalari (agar mavjud bo‘lsa)
+        # ⚡ Bu joyda StudentAnswer emas, balki TestResult'dan foydalanamiz
         tests = (
             db.query(StudentAnswer)
             .filter(StudentAnswer.student_id == student.id)
@@ -99,7 +105,7 @@ def get_dashboard_stats(
             .all()
         )
 
-        test_scores = [t.score for t in tests]
+        test_scores = [t.score for t in tests if t.score is not None]
         avg_score = round(sum(test_scores) / len(test_scores), 2) if test_scores else 0
         last_score = test_scores[-1] if test_scores else 0
 
@@ -117,6 +123,7 @@ def get_dashboard_stats(
             "tests": {
                 "average": avg_score,
                 "last": last_score,
+                "taken": len(tests),
             },
         }
 
