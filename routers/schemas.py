@@ -224,8 +224,13 @@ class CourseBase(BaseModel):
     price: float | None = None
 
 
-class CourseCreate(CourseBase):
-    pass
+class CourseCreate(BaseModel):
+    title: str
+    subject: str
+    teacher_id: int           # <-- frontend shu id ni yuborishi kerak
+    description: Optional[str] = None
+    start_date: Optional[date] = None
+    price: Optional[float] = 0.0
 
 
 class CourseOut(CourseBase):
