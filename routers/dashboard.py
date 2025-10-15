@@ -120,7 +120,7 @@ def get_dashboard_stats(
                 .filter(
                     StudentAnswer.student_id == student.id,
                     Question.test_id == test_id,
-                    Option.is_correct == True,
+                    Option.is_correct == 1,
                     func.date_trunc('second', StudentAnswer.submitted_at)
                     == func.date_trunc('second', last_attempt)
                 )
