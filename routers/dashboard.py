@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from .models import User, StudentStatus, Group, Payment, Attendance, UserRole, StudentAnswer, group_students, \
-    group_teachers, Question, Option
+    group_teachers, Question, Option, Test
 from .dependencies import get_db, get_current_user
 
 dashboard_router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
@@ -75,15 +75,21 @@ def get_dashboard_stats(
         # 1️⃣ Studentni topish
         student = (
             db.query(User)
-            .filter(User.role == UserRole.student)
-            .filter(User.id == current_user.id)
+            .filter(User.role == UserRole.student, User.id == current_user.id)
             .first()
         )
         if not student:
             raise HTTPException(status_code=404, detail="Student topilmadi")
 
-        # 2️⃣ Test ID’larni olish
-        test_ids = [q.test_id for q in db.query(Question.test_id).distinct().all()]
+        # 2️⃣ Student qatnashgan testlar ID’lari
+        test_ids = (
+            db.query(Question.test_id)
+            .join(StudentAnswer, StudentAnswer.question_id == Question.id)
+            .filter(StudentAnswer.student_id == student.id)
+            .distinct()
+            .all()
+        )
+        test_ids = [tid[0] for tid in test_ids]
 
         results = []
 
@@ -104,7 +110,7 @@ def get_dashboard_stats(
                 .scalar()
             )
             if not last_attempt:
-                continue  # student bu testni hali ishlamagan bo‘lishi mumkin
+                continue
 
             # 5️⃣ Faqat eng so‘nggi urinishdagi javoblarni olish
             correct = (
@@ -114,22 +120,33 @@ def get_dashboard_stats(
                 .filter(
                     StudentAnswer.student_id == student.id,
                     Question.test_id == test_id,
-                    Option.is_correct == 1,
+                    Option.is_correct == True,
                     func.date_trunc('second', StudentAnswer.submitted_at)
                     == func.date_trunc('second', last_attempt)
                 )
                 .scalar()
             )
 
-            # 6️⃣ Test natijasini hisoblash
+            # 6️⃣ Test nomini olish
+            test = db.query(Test).filter(Test.id == test_id).first()
+            test_name = test.title if test else f"Test #{test_id}"
+
+            # 7️⃣ Test natijasini hisoblash
             score = round((correct / total_q) * 100, 2) if total_q else 0
-            results.append(score)
+            results.append({
+                "test_id": test_id,
+                "test_name": test_name,
+                "submitted_at": last_attempt.strftime("%Y-%m-%d %H:%M:%S"),
+                "correct": correct,
+                "total_questions": total_q,
+                "score": score
+            })
 
-        # 7️⃣ O‘rtacha va oxirgi ballni hisoblash
-        avg_score = round(sum(results) / len(results), 2) if results else 0
-        last_score = results[-1] if results else 0
+        # 8️⃣ O‘rtacha va oxirgi ballni hisoblash
+        avg_score = round(sum(r["score"] for r in results) / len(results), 2) if results else 0
+        last_score = results[-1]["score"] if results else 0
 
-        # 8️⃣ Yakuniy statistika
+        # 9️⃣ Yakuniy statistika
         stats = {
             "profile": {
                 "full_name": student.full_name,
@@ -146,10 +163,12 @@ def get_dashboard_stats(
             "tests": {
                 "average": avg_score,
                 "last": last_score,
+                "details": results  # 🔥 Har bir test alohida ko‘rsatiladi
             },
         }
 
         return stats
+
 
     else:
         raise HTTPException(status_code=403, detail="Role not supported")
