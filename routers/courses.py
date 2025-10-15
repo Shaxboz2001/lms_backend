@@ -18,7 +18,7 @@ def create_course(
         description=course.description,
         start_date=course.start_date,
         price=course.price,
-        creator_id=current_user.id,
+        created_by=current_user.id,
     )
     db.add(new_course)
     db.commit()
