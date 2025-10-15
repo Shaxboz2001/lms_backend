@@ -17,7 +17,6 @@ def create_course(
         title=course.title,
         description=course.description,
         start_date=course.start_date,
-        end_date=course.end_date,
         price=course.price,
         creator_id=current_user.id,
     )
@@ -29,7 +28,6 @@ def create_course(
         title=new_course.title,
         description=new_course.description,
         start_date=new_course.start_date,
-        end_date=new_course.end_date,
         price=new_course.price,
         creator_id=new_course.creator_id,
         creator_name=current_user.full_name,
@@ -45,7 +43,6 @@ def get_courses(db: Session = Depends(get_db)):
             title=c.title,
             description=c.description,
             start_date=c.start_date,
-            end_date=c.end_date,
             price=c.price,
             creator_id=c.creator_id,
             creator_name=c.creator.full_name if c.creator else None,
