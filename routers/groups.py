@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from .dependencies import get_db
 from .models import Group, Course, User, UserRole
 from .schemas import GroupCreate, GroupUpdate, GroupResponse
 
 groups_router = APIRouter(prefix="/groups", tags=["Groups"])
+
 
 # ------------------------------
 # CREATE group
@@ -14,6 +15,14 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
     course = db.query(Course).filter(Course.id == group.course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
+
+    teacher = db.query(User).filter(User.id == group.teacher_id, User.role == UserRole.teacher).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found or invalid role")
+
+    student = db.query(User).filter(User.id == group.student_id, User.role == UserRole.student).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found or invalid role")
 
     new_group = Group(
         name=group.name,
@@ -32,7 +41,13 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
 # ------------------------------
 @groups_router.get("/", response_model=list[GroupResponse])
 def get_groups(db: Session = Depends(get_db)):
-    groups = db.query(Group).all()
+    # joinedload — qo‘shimcha SELECT so‘rovlarini kamaytiradi (Supabase uchun muhim)
+    groups = (
+        db.query(Group)
+        .options(joinedload(Group.course), joinedload(Group.teacher), joinedload(Group.student))
+        .all()
+    )
+
     return [
         GroupResponse(
             id=g.id,
@@ -57,10 +72,14 @@ def update_group(group_id: int, updated: GroupUpdate, db: Session = Depends(get_
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    group.name = updated.name or group.name
-    group.course_id = updated.course_id or group.course_id
-    group.teacher_id = updated.teacher_id or group.teacher_id
-    group.student_id = updated.student_id or group.student_id
+    if updated.name is not None:
+        group.name = updated.name
+    if updated.course_id is not None:
+        group.course_id = updated.course_id
+    if updated.teacher_id is not None:
+        group.teacher_id = updated.teacher_id
+    if updated.student_id is not None:
+        group.student_id = updated.student_id
 
     db.commit()
     db.refresh(group)
@@ -75,6 +94,7 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
     group = db.query(Group).filter(Group.id == group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
+
     db.delete(group)
     db.commit()
     return {"message": "Group deleted successfully"}
@@ -90,9 +110,17 @@ def get_courses(db: Session = Depends(get_db)):
 
 @groups_router.get("/teachers/{course_id}")
 def get_teachers_for_course(course_id: int, db: Session = Depends(get_db)):
-    return db.query(User).filter(User.role == UserRole.teacher, User.course_id == course_id).all()
+    return (
+        db.query(User)
+        .filter(User.role == UserRole.teacher, User.course_id == course_id)
+        .all()
+    )
 
 
 @groups_router.get("/students/{course_id}")
 def get_students_for_course(course_id: int, db: Session = Depends(get_db)):
-    return db.query(User).filter(User.role == UserRole.student, User.course_id == course_id).all()
+    return (
+        db.query(User)
+        .filter(User.role == UserRole.student, User.course_id == course_id)
+        .all()
+    )
