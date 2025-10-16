@@ -241,7 +241,7 @@ class Course(Base):
     creator = relationship("User", back_populates="created_courses", foreign_keys=[created_by])
     students = relationship("StudentCourse", back_populates="course")
 
-    teacher_id = Column(Integer, ForeignKey("users.id"))
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     teacher = relationship("User", foreign_keys=[teacher_id])
 
 
