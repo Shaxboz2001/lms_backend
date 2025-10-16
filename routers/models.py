@@ -49,31 +49,31 @@ group_teachers = Table(
 # ==============================
 class User(Base):
     __tablename__ = "users"
-    __allow_unmapped__ = True  # ✅ Eski uslubdagi annotatsiyalarni ruxsat beradi
+    __allow_unmapped__ = True
 
     id = Column(Integer, primary_key=True, index=True)
-    username: str
-    full_name: Optional[str] = None
-    password: str
-    role: Optional[UserRole] = UserRole.student
-    phone: Optional[str] = None
-    address: Optional[str] = None
-    age: Optional[int] = None
-    group_id: Optional[int] = None
-    teacher_id: Optional[int] = None
-    subject: Optional[str] = None
-    fee: Optional[float] = 0.0  # ✅ default 0.0 bo‘lsin
-    status: Optional[StudentStatus] = StudentStatus.interested
+    username = Column(String, unique=True, nullable=False, index=True)
+    full_name = Column(String, nullable=True)
+    password = Column(String, nullable=False)
+    role = Column(Enum(UserRole), default=UserRole.student)
+    phone = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    age = Column(Integer, nullable=True)
+    group_id = Column(Integer, ForeignKey("groups.id"), nullable=True)
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    subject = Column(String, nullable=True)
+    fee = Column(Float, nullable=True, default=0.0)
+    status = Column(Enum(StudentStatus), default=StudentStatus.interested)
 
     # Relationships
     groups_as_teacher = relationship(
         "Group",
-        secondary=group_teachers,
+        secondary="group_teachers",
         back_populates="teachers"
     )
     groups_as_student = relationship(
         "Group",
-        secondary=group_students,
+        secondary="group_students",
         back_populates="students"
     )
 
@@ -99,7 +99,6 @@ class User(Base):
         back_populates="teacher"
     )
 
-    # ✅ aniq foreign_keys berildi
     created_courses = relationship(
         "Course",
         back_populates="creator",
