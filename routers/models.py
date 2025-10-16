@@ -90,6 +90,8 @@ class Group(Base):
     attendances = relationship("Attendance", back_populates="group")
     payments = relationship("Payment", back_populates="group")
     tests = relationship("Test", back_populates="group")
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=True)
+    course = relationship("Course")
 
 
 # ==============================
@@ -191,6 +193,8 @@ class Course(Base):
 
     creator = relationship("User", back_populates="created_courses")
     students = relationship("StudentCourse", back_populates="course")
+    teacher_id = Column(Integer, ForeignKey("users.id"))
+    teacher = relationship("User", foreign_keys=[teacher_id])
 
 # ==============================
 # StudentCourse model

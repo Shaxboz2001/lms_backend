@@ -85,6 +85,8 @@ class GroupCreate(BaseModel):
     description: Optional[str] = None
     student_ids: Optional[List[int]] = []
     teacher_ids: Optional[List[int]] = []
+    course_id: Optional[int] = None   # ✅ yangi qo‘shildi
+
 
 
 class GroupResponse(BaseModel):
@@ -94,9 +96,16 @@ class GroupResponse(BaseModel):
     created_at: datetime
     student_ids: List[int] = []
     teacher_ids: List[int] = []
+    course_id: Optional[int] = None  # ✅ yangi qo‘shildi
 
     class Config:
         from_attributes = True
+
+class GroupUpdate(BaseModel):
+    name: Optional[str] = None
+    course_id: Optional[int] = None
+    teacher_id: Optional[int] = None
+    student_id: Optional[int] = None
 
 
 # ==============================

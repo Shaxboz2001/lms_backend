@@ -1,133 +1,99 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from typing import List
-from .dependencies import get_db, get_current_user  # JWT bilan get_current_user
+from passlib.context import CryptContext
+from .dependencies import get_db, get_current_user
 from .schemas import UserResponse, RoleEnum, UserUpdate
 from .models import User, UserRole
 
-users_router = APIRouter(
-    prefix="/users",
-    tags=["Users"]
-)
+users_router = APIRouter(prefix="/users", tags=["Users"])
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ------------------------------
-# GET all users
+# GET All Users
 # ------------------------------
 @users_router.get("/", response_model=List[UserResponse])
-def get_users(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # JWT orqali
-):
-    # Admin va manager barcha userlarni ko‘ra oladi
+def get_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role in [UserRole.admin, UserRole.manager]:
-        users = db.query(User).all()
-    else:
-        # Teacher va student faqat o‘zini ko‘rishi mumkin
-        users = [current_user]
-    return users
+        return db.query(User).all()
+    return [current_user]
+
 
 # ------------------------------
-# Create new user
+# CREATE User
 # ------------------------------
 @users_router.post("/", response_model=UserResponse)
 def create_user(
     username: str = Body(...),
     password: str = Body(...),
     role: RoleEnum = Body(RoleEnum.student),
+    full_name: str = Body(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # JWT orqali
+    current_user: User = Depends(get_current_user),
 ):
-    # Faqat admin yoki manager user qo‘sha oladi
     if current_user.role not in [UserRole.admin, UserRole.manager]:
-        raise HTTPException(status_code=403, detail="Not allowed to create users")
+        raise HTTPException(status_code=403, detail="Foydalanuvchi yaratish uchun ruxsat yo‘q")
 
-    # Username unique tekshiruv
-    existing_user = db.query(User).filter(User.username == username).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Username already exists")
+    if db.query(User).filter(User.username == username).first():
+        raise HTTPException(status_code=400, detail="Bu foydalanuvchi nomi band")
 
-    # Passwordni hash qilish
-    from passlib.context import CryptContext
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
     hashed_pw = pwd_context.hash(password)
-
-    new_user = User(
-        username=username,
-        password=hashed_pw,
-        role=UserRole(role)
-    )
+    new_user = User(username=username, password=hashed_pw, role=UserRole(role), full_name=full_name)
 
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     return new_user
 
-@users_router.get("/me")
-def get_my_profile(current_user: User = Depends(get_current_user)):
-    return {
-        "id": current_user.id,
-        "username": current_user.username,
-        "full_name": current_user.full_name,
-        "role": current_user.role,
-        "phone": current_user.phone,
-        "address": current_user.address,
-        "age": current_user.age,
-        "group_id": current_user.group_id,
-        "subject": current_user.subject,
-        "fee": current_user.fee,
-        "status": current_user.status,
-    }
 
+# ------------------------------
+# GET My Profile
+# ------------------------------
+@users_router.get("/me", response_model=UserResponse)
+def get_my_profile(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
+# ------------------------------
+# UPDATE User
+# ------------------------------
 @users_router.put("/{user_id}", response_model=UserResponse)
 def update_user(
     user_id: int,
     user_update: UserUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    # Ruxsat: faqat o'z profilini tahrirlash yoki admin/manager
-    if current_user.id != user_id and current_user.role not in [UserRole.admin, UserRole.manager]:
-        raise HTTPException(status_code=403, detail="Not allowed to update this user")
-
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
 
-    update_data = user_update.dict(exclude_unset=True)
+    if current_user.id != user_id and current_user.role not in [UserRole.admin, UserRole.manager]:
+        raise HTTPException(status_code=403, detail="Bu foydalanuvchini tahrirlash mumkin emas")
 
-    # Username uniqueness tekshiruvi (agar username kelgan bo'lsa)
-    if "username" in update_data and update_data["username"]:
-        exists = db.query(User).filter(User.username == update_data["username"], User.id != user_id).first()
-        if exists:
-            raise HTTPException(status_code=400, detail="Username already exists")
+    data = user_update.dict(exclude_unset=True)
+    if "password" in data:
+        data["password"] = pwd_context.hash(data["password"])
 
-    # Agar password bor bo'lsa -> hash qilamiz
-    if "password" in update_data and update_data["password"]:
-        from passlib.context import CryptContext
-        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-        update_data["password"] = pwd_context.hash(update_data["password"])
-    elif "password" in update_data and not update_data["password"]:
-        # bo'sh parol jo'natilsa, uni inobatga olmang (ya'ni o'chiring)
-        update_data.pop("password", None)
-
-    # Yangilash
-    for key, value in update_data.items():
-        setattr(user, key, value)
+    for key, val in data.items():
+        setattr(user, key, val)
 
     db.commit()
     db.refresh(user)
     return user
 
 
+# ------------------------------
+# GET Single User
+# ------------------------------
 @users_router.get("/{user_id}", response_model=UserResponse)
 def get_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
 
-    # Faqat o‘z profilini yoki admin boshqa foydalanuvchini ko‘rishi mumkin
-    if current_user.id != user.id and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="You are not allowed to view this profile")
+    if current_user.role != UserRole.admin and current_user.id != user.id:
+        raise HTTPException(status_code=403, detail="Bu profilni ko‘rish mumkin emas")
 
     return user
-
