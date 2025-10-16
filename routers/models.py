@@ -1,5 +1,4 @@
 from typing import Optional
-
 from sqlalchemy import Column, Integer, String, Enum, Float, ForeignKey, DateTime, Table, Text, Date
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -50,6 +49,7 @@ group_teachers = Table(
 # ==============================
 class User(Base):
     __tablename__ = "users"
+    __allow_unmapped__ = True  # ✅ Eski uslubdagi annotatsiyalarni ruxsat beradi
 
     id = Column(Integer, primary_key=True, index=True)
     username: str
