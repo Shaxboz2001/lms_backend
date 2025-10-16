@@ -1,3 +1,5 @@
+from typing import Optional
+
 from sqlalchemy import Column, Integer, String, Enum, Float, ForeignKey, DateTime, Table, Text, Date
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -50,20 +52,18 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, nullable=False, index=True)
-    full_name = Column(String, nullable=True)
-    password = Column(String, nullable=False)
-    role = Column(Enum(UserRole), default=UserRole.student)
-    phone = Column(String, nullable=True)
-    address = Column(String, nullable=True)
-    age = Column(Integer, nullable=True)
-
-    # Student-specific
-    group_id = Column(Integer, ForeignKey("groups.id"), nullable=True)
-    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    subject = Column(String, nullable=True)
-    fee = Column(Float, nullable=True)
-    status = Column(Enum(StudentStatus), default=StudentStatus.interested)
+    username: str
+    full_name: Optional[str] = None
+    password: str
+    role: Optional[UserRole] = UserRole.student
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    age: Optional[int] = None
+    group_id: Optional[int] = None
+    teacher_id: Optional[int] = None
+    subject: Optional[str] = None
+    fee: Optional[float] = 0.0  # ✅ default 0.0 bo‘lsin
+    status: Optional[StudentStatus] = StudentStatus.interested
 
     # Relationships
     groups_as_teacher = relationship(
