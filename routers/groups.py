@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 from .dependencies import get_db
 from .models import Group, Course, User, UserRole
 from .schemas import GroupCreate, GroupUpdate, GroupResponse
+from typing import List
 
 groups_router = APIRouter(prefix="/groups", tags=["Groups"])
 
@@ -39,28 +40,14 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
 # ------------------------------
 # GET all groups
 # ------------------------------
-@groups_router.get("/", response_model=list[GroupResponse])
+@groups_router.get("/", response_model=List[GroupResponse])
 def get_groups(db: Session = Depends(get_db)):
-    # joinedload — qo‘shimcha SELECT so‘rovlarini kamaytiradi (Supabase uchun muhim)
-    groups = (
-        db.query(Group)
-        .options(joinedload(Group.course), joinedload(Group.teacher), joinedload(Group.student))
-        .all()
-    )
-
-    return [
-        GroupResponse(
-            id=g.id,
-            name=g.name,
-            course_id=g.course_id,
-            course_name=g.course.title if g.course else None,
-            teacher_id=g.teacher_id,
-            teacher_name=g.teacher.full_name if g.teacher else None,
-            student_id=g.student_id,
-            student_name=g.student.full_name if g.student else None,
-        )
-        for g in groups
-    ]
+    groups = db.query(Group).options(
+        joinedload(Group.course),
+        joinedload(Group.teachers),
+        joinedload(Group.students)
+    ).all()
+    return groups
 
 
 # ------------------------------
