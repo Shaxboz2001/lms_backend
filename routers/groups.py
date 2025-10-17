@@ -31,7 +31,7 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
         ).all()
         if not teacher:
             raise HTTPException(status_code=404, detail="No valid teachers found")
-        new_group.teacher.extend(teacher)
+        new_group.teacher = teacher
 
     # Talabalarni boglash (student_ids list)
     if group.student_ids:
