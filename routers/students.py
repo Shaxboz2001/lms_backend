@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
-from .dependencies import get_db, get_current_user
+from typing import List, Optional
 from passlib.context import CryptContext
+from .dependencies import get_db, get_current_user
 from .schemas import UserResponse, UserCreate, UserBase
-from .models import User, UserRole, StudentStatus
+from .models import User, UserRole, StudentStatus, Course
 
 students_router = APIRouter(
     prefix="/students",
@@ -21,29 +21,40 @@ def create_student(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    # 🔒 Faqat admin yoki manager
     if current_user.role not in [UserRole.admin, UserRole.manager]:
         raise HTTPException(status_code=403, detail="Not allowed")
 
+    # 🔍 Username mavjudligini tekshirish
     existing_user = db.query(User).filter(User.username == student.username).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already exists")
 
-    # 🔥 Parolni hash qilib saqlaymiz
+    # 🔒 Parolni hash qilish
     hashed_password = pwd_context.hash(student.password or "1234")
 
+    # 🎓 Kursni tekshirish (fee olish uchun)
+    course_fee = None
+    if getattr(student, "course_id", None):
+        course = db.query(Course).filter(Course.id == student.course_id).first()
+        if not course:
+            raise HTTPException(status_code=404, detail="Course not found")
+        course_fee = course.fee
+
+    # 🧑‍🎓 Yangi student
     new_student = User(
         username=student.username,
         full_name=student.full_name,
         password=hashed_password,
         phone=student.phone,
         address=student.address,
-        role=UserRole.student,  # role har doim student
-        subject=student.subject,
-        fee=student.fee,
+        role=UserRole.student,
+        fee=course_fee or student.fee,
         status=student.status or StudentStatus.studying,
         age=student.age,
-        group_id=getattr(student, "group_id", None),  # optional chaqirish
-        teacher_id=getattr(student, "teacher_id", None)  # optional chaqirish
+        group_id=getattr(student, "group_id", None),
+        teacher_id=getattr(student, "teacher_id", None),
+        course_id=getattr(student, "course_id", None)
     )
 
     db.add(new_student)
@@ -54,7 +65,10 @@ def create_student(
 
 # ✅ Barcha studentlarni olish
 @students_router.get("/", response_model=List[UserResponse])
-def get_students(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_students(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     if current_user.role not in [UserRole.admin, UserRole.manager, UserRole.teacher]:
         raise HTTPException(status_code=403, detail="Not allowed")
 
@@ -64,14 +78,18 @@ def get_students(db: Session = Depends(get_db), current_user: User = Depends(get
 
 # ✅ Bitta studentni olish
 @students_router.get("/{student_id}", response_model=UserResponse)
-def get_student(student_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_student(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     student = db.query(User).filter(User.id == student_id, User.role == UserRole.student).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
     return student
 
 
-# ✅ Student ma'lumotini o‘zgartirish
+# ✅ Studentni yangilash (course_id o‘zgarsa fee ham avtomatik)
 @students_router.put("/{student_id}", response_model=UserResponse)
 def update_student(
     student_id: int,
@@ -82,23 +100,24 @@ def update_student(
     if current_user.role not in [UserRole.admin, UserRole.manager, UserRole.teacher]:
         raise HTTPException(status_code=403, detail="Not allowed")
 
-    student = db.query(User).filter(
-        User.id == student_id,
-        User.role == UserRole.student
-    ).first()
-
+    student = db.query(User).filter(User.id == student_id, User.role == UserRole.student).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
     update_data = updated.dict(exclude_unset=True)
 
-    # 🔒 Agar password kelgan bo‘lsa — hash qilamiz
+    # 🔒 Parol yangilansa — hash qilamiz
     if "password" in update_data and update_data["password"]:
-        from passlib.context import CryptContext
-        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         update_data["password"] = pwd_context.hash(update_data["password"])
 
-    # 🔁 Boshqa fieldlarni yangilaymiz
+    # 🎓 Agar course_id o‘zgarsa — yangi fee avtomatik olinadi
+    if "course_id" in update_data and update_data["course_id"]:
+        new_course = db.query(Course).filter(Course.id == update_data["course_id"]).first()
+        if not new_course:
+            raise HTTPException(status_code=404, detail="New course not found")
+        update_data["fee"] = new_course.fee
+
+    # 🧩 Ma'lumotlarni yangilash
     for key, value in update_data.items():
         setattr(student, key, value)
 
@@ -107,10 +126,13 @@ def update_student(
     return student
 
 
-
 # ✅ Studentni o‘chirish
 @students_router.delete("/{student_id}")
-def delete_student(student_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def delete_student(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     if current_user.role not in [UserRole.admin, UserRole.manager]:
         raise HTTPException(status_code=403, detail="Not allowed")
 
@@ -120,4 +142,4 @@ def delete_student(student_id: int, db: Session = Depends(get_db), current_user:
 
     db.delete(student)
     db.commit()
-    return {"detail": "Student deleted successfully"}
+    return {"detail": f"Student '{student.full_name}' deleted successfully"}
