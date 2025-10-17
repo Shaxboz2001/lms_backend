@@ -17,20 +17,30 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
 
-    teacher = db.query(User).filter(User.id == group.teacher_id, User.role == UserRole.teacher).first()
-    if not teacher:
-        raise HTTPException(status_code=404, detail="Teacher not found or invalid role")
-
-    student = db.query(User).filter(User.id == group.student_id, User.role == UserRole.student).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found or invalid role")
-
     new_group = Group(
         name=group.name,
+        description=group.description,
         course_id=group.course_id,
-        teacher_id=group.teacher_id,
-        student_id=group.student_id
     )
+
+    # O‘qituvchilarni bog‘lash (teacher_id list)
+    if group.teacher_id:
+        teachers = db.query(User).filter(
+            User.id.in_([group.teacher_id]), User.role == UserRole.teacher
+        ).all()
+        if not teachers:
+            raise HTTPException(status_code=404, detail="No valid teachers found")
+        new_group.teachers.extend(teachers)
+
+    # Talabalarni bog‘lash (student_ids list)
+    if group.student_ids:
+        students = db.query(User).filter(
+            User.id.in_(group.student_ids), User.role == UserRole.student
+        ).all()
+        if not students:
+            raise HTTPException(status_code=404, detail="No valid students found")
+        new_group.students.extend(students)
+
     db.add(new_group)
     db.commit()
     db.refresh(new_group)
@@ -45,7 +55,7 @@ def get_groups(db: Session = Depends(get_db)):
     groups = db.query(Group).options(
         joinedload(Group.course),
         joinedload(Group.teachers),
-        joinedload(Group.students)
+        joinedload(Group.students),
     ).all()
     return groups
 
@@ -61,12 +71,24 @@ def update_group(group_id: int, updated: GroupUpdate, db: Session = Depends(get_
 
     if updated.name is not None:
         group.name = updated.name
+    if updated.description is not None:
+        group.description = updated.description
     if updated.course_id is not None:
         group.course_id = updated.course_id
-    if updated.teacher_id is not None:
-        group.teacher_id = updated.teacher_id
-    if updated.student_id is not None:
-        group.student_id = updated.student_id
+
+    # O‘qituvchilarni yangilash
+    if updated.teacher_id:
+        teachers = db.query(User).filter(
+            User.id.in_([updated.teacher_id]), User.role == UserRole.teacher
+        ).all()
+        group.teachers = teachers
+
+    # Talabalarni yangilash
+    if updated.student_ids is not None:
+        students = db.query(User).filter(
+            User.id.in_(updated.student_ids), User.role == UserRole.student
+        ).all()
+        group.students = students
 
     db.commit()
     db.refresh(group)
