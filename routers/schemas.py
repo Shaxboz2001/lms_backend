@@ -121,7 +121,7 @@ class GroupCreate(BaseModel):
     name: str
     description: Optional[str] = None
     course_id: int
-    teacher_id: int
+    teacher_id: List[int]
     student_ids: Optional[List[int]] = []
 
 
@@ -129,7 +129,7 @@ class GroupUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     course_id: Optional[int] = None
-    teacher_ids: Optional[List[int]] = []
+    teacher_id: Optional[List[int]] = []
     student_ids: Optional[List[int]] = []
 
 
