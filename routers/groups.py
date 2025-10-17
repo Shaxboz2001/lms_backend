@@ -18,15 +18,8 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
 
-    # 2️⃣ Yangi guruh obyektini yaratish
-    new_group = Group(
-        name=group.name,
-        description=group.description,
-        course_id=group.course_id,
-        teacher_id=group.teacher_id  # foreign key
-    )
-
-    # 3️⃣ O‘qituvchini bog‘lash
+    # 2️⃣ O‘qituvchini tekshirish
+    teacher = None
     if group.teacher_id:
         teacher = db.query(User).filter(
             User.id == group.teacher_id,
@@ -34,23 +27,49 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
         ).first()
         if not teacher:
             raise HTTPException(status_code=404, detail="Teacher not found")
-        new_group.teacher = teacher  # bu yerda teacher obyekt
 
-    # 4️⃣ Talabalarni bog‘lash
-    if group.student_ids:
-        students = db.query(User).filter(
-            User.id.in_(group.student_ids),
-            User.role == UserRole.student
-        ).all()
-        if not students:
-            raise HTTPException(status_code=404, detail="No valid students found")
-        new_group.students.extend(students)
+    # 3️⃣ Yangi guruh obyektini yaratish
+    new_group = Group(
+        name=group.name,
+        description=group.description,
+        course_id=group.course_id,
+        teacher_id=group.teacher_id
+    )
 
-    # 5️⃣ Bazaga saqlash
     db.add(new_group)
     db.commit()
     db.refresh(new_group)
 
+    # 4️⃣ Talabalarni bog‘lash (agar mavjud bo‘lsa)
+    if getattr(group, "student_ids", None):
+        students = db.query(User).filter(
+            User.id.in_(group.student_ids),
+            User.role == UserRole.student
+        ).all()
+
+        if not students:
+            raise HTTPException(status_code=404, detail="No valid students found")
+
+        # Har bir studentni shu group va kursga bog‘laymiz
+        for student in students:
+            student.group_id = new_group.id
+
+            # StudentCourse jadvaliga ham yozamiz
+            enrollment_exists = db.query(StudentCourse).filter(
+                StudentCourse.student_id == student.id,
+                StudentCourse.course_id == course.id
+            ).first()
+
+            if not enrollment_exists:
+                enrollment = StudentCourse(
+                    student_id=student.id,
+                    course_id=course.id
+                )
+                db.add(enrollment)
+
+        db.commit()
+
+    db.refresh(new_group)
     return new_group
 
 
