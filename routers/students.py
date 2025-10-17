@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List
 from passlib.context import CryptContext
 from .dependencies import get_db, get_current_user
 from .schemas import UserResponse, UserCreate, UserBase
-from .models import User, UserRole, StudentStatus, Course
+from .models import User, UserRole, StudentStatus, Course, StudentCourse
 
 students_router = APIRouter(
     prefix="/students",
@@ -39,7 +39,7 @@ def create_student(
         course = db.query(Course).filter(Course.id == student.course_id).first()
         if not course:
             raise HTTPException(status_code=404, detail="Course not found")
-        course_fee = course.fee
+        course_fee = course.price  # ✅ course.price dan olinadi
 
     # 🧑‍🎓 Yangi student
     new_student = User(
@@ -54,12 +54,21 @@ def create_student(
         age=student.age,
         group_id=getattr(student, "group_id", None),
         teacher_id=getattr(student, "teacher_id", None),
-        course_id=getattr(student, "course_id", None)
     )
 
     db.add(new_student)
     db.commit()
     db.refresh(new_student)
+
+    # 🧩 Agar kurs tanlangan bo‘lsa, StudentCourse jadvaliga qo‘shamiz
+    if getattr(student, "course_id", None):
+        new_enrollment = StudentCourse(
+            student_id=new_student.id,
+            course_id=student.course_id
+        )
+        db.add(new_enrollment)
+        db.commit()
+
     return new_student
 
 
@@ -89,7 +98,7 @@ def get_student(
     return student
 
 
-# ✅ Studentni yangilash (course_id o‘zgarsa fee ham avtomatik)
+# ✅ Studentni yangilash
 @students_router.put("/{student_id}", response_model=UserResponse)
 def update_student(
     student_id: int,
@@ -110,12 +119,23 @@ def update_student(
     if "password" in update_data and update_data["password"]:
         update_data["password"] = pwd_context.hash(update_data["password"])
 
-    # 🎓 Agar course_id o‘zgarsa — yangi fee avtomatik olinadi
+    # 🎓 Agar course_id o‘zgarsa — StudentCourse jadvalini yangilaymiz
     if "course_id" in update_data and update_data["course_id"]:
         new_course = db.query(Course).filter(Course.id == update_data["course_id"]).first()
         if not new_course:
             raise HTTPException(status_code=404, detail="New course not found")
-        update_data["fee"] = new_course.fee
+
+        # Eski enrolmentni o‘chir
+        db.query(StudentCourse).filter(StudentCourse.student_id == student.id).delete()
+
+        # Yangi enrolment qo‘sh
+        new_enrollment = StudentCourse(
+            student_id=student.id,
+            course_id=update_data["course_id"]
+        )
+        db.add(new_enrollment)
+
+        update_data["fee"] = new_course.price
 
     # 🧩 Ma'lumotlarni yangilash
     for key, value in update_data.items():
@@ -139,6 +159,9 @@ def delete_student(
     student = db.query(User).filter(User.id == student_id, User.role == UserRole.student).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+
+    # StudentCourse dan ham o‘chiramiz
+    db.query(StudentCourse).filter(StudentCourse.student_id == student.id).delete()
 
     db.delete(student)
     db.commit()
