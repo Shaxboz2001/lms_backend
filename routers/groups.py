@@ -139,8 +139,7 @@ def get_teachers_for_course(course_id: int, db: Session = Depends(get_db)):
 def get_students_for_course(course_id: int, db: Session = Depends(get_db)):
     students = (
         db.query(User)
-        .join(StudentCourse, StudentCourse.student_id == User.id)
-        .filter(StudentCourse.course_id == course_id, User.role == UserRole.student)
+        .filter(User.course_id == course_id, User.role == UserRole.student)
         .all()
     )
     return students
