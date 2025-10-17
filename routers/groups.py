@@ -26,14 +26,14 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
 
     # Oqituvchilarni boglash (teacher_id list)
     if group.teacher_id:
-        teachers = db.query(User).filter(
+        teacher = db.query(User).filter(
             User.id.in_([group.teacher_id]), User.role == UserRole.teacher
         ).all()
-        if not teachers:
+        if not teacher:
             raise HTTPException(status_code=404, detail="No valid teachers found")
-        new_group.teachers.extend(teachers)
+        new_group.teacher.extend(teacher)
 
-    # Talabalarni bog‘lash (student_ids list)
+    # Talabalarni boglash (student_ids list)
     if group.student_ids:
         students = db.query(User).filter(
             User.id.in_(group.student_ids), User.role == UserRole.student
@@ -79,10 +79,10 @@ def update_group(group_id: int, updated: GroupUpdate, db: Session = Depends(get_
 
     # O‘qituvchilarni yangilash
     if updated.teacher_id:
-        teachers = db.query(User).filter(
+        teacher = db.query(User).filter(
             User.id.in_([updated.teacher_id]), User.role == UserRole.teacher
         ).all()
-        group.teachers = teachers
+        group.teacher = teacher
 
     # Talabalarni yangilash
     if updated.student_ids is not None:
