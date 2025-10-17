@@ -69,7 +69,7 @@ class User(Base):
     groups_as_teacher = relationship(
         "Group",
         secondary="group_teachers",
-        back_populates="teachers"
+        back_populates="teacher"
     )
     groups_as_student = relationship(
         "Group",
