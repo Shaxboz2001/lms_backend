@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from .dependencies import get_db
-from .models import Group, Course, User, UserRole
+from .models import Group, Course, User, UserRole, StudentCourse
 from .schemas import GroupCreate, GroupUpdate, GroupResponse
 from typing import List
 
@@ -97,17 +97,20 @@ def get_courses(db: Session = Depends(get_db)):
 
 @groups_router.get("/teachers/{course_id}")
 def get_teachers_for_course(course_id: int, db: Session = Depends(get_db)):
-    return (
-        db.query(User)
-        .filter(User.role == UserRole.teacher, User.course_id == course_id)
-        .all()
-    )
+    course = db.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    teacher = db.query(User).filter(User.id == course.teacher_id).first()
+    return [teacher] if teacher else []
 
 
 @groups_router.get("/students/{course_id}")
 def get_students_for_course(course_id: int, db: Session = Depends(get_db)):
-    return (
+    students = (
         db.query(User)
-        .filter(User.role == UserRole.student, User.course_id == course_id)
+        .join(StudentCourse, StudentCourse.student_id == User.id)
+        .filter(StudentCourse.course_id == course_id, User.role == UserRole.student)
         .all()
     )
+    return students
