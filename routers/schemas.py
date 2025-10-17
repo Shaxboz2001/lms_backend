@@ -91,15 +91,24 @@ class CourseBase(BaseModel):
     price: Optional[float] = 0.0
 
 
-class CourseCreate(CourseBase):
-    pass
+class CourseCreate(BaseModel):
+    title: str
+    subject: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[float] = 0
+    start_date: Optional[date] = None
+    teacher_id: Optional[int] = None  # frontenddan keladi
 
 
-class CourseOut(CourseBase):
+class CourseOut(BaseModel):
     id: int
-    creator_id: Optional[int] = None
-    creator_name: Optional[str] = None
-    teacher_name: Optional[str] = None
+    title: str
+    subject: Optional[str]
+    description: Optional[str]
+    price: Optional[float]
+    start_date: Optional[date]
+    teacher_name: Optional[str]
+    teacher_id: Optional[int]
 
     class Config:
         from_attributes = True

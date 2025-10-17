@@ -229,18 +229,17 @@ class Course(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
-    subject = Column(String, nullable=False)
-    teacher_name = Column(String, nullable=False)
-    price = Column(Integer, nullable=True)
-    start_date = Column(Date, nullable=True)
+    subject = Column(String, nullable=True)
     description = Column(Text, nullable=True)
-    created_by = Column(Integer, ForeignKey("users.id"))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    price = Column(Float, default=0)
+    start_date = Column(Date, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
 
-    creator = relationship("User", back_populates="created_courses", foreign_keys=[created_by])
-    students = relationship("StudentCourse", back_populates="course")
+    # Asosiy o‘qituvchi
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    teacher_name = Column(String, nullable=True)
 
-    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Aloqalar
     teacher = relationship("User", foreign_keys=[teacher_id])
 
 

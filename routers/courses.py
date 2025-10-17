@@ -26,10 +26,11 @@ def create_course(
     new_course = Course(
         title=course.title,
         subject=course.subject,
-        teacher_name=teacher.full_name,
+        description=course.description,
         price=course.price,
         start_date=course.start_date,
-        description=course.description,
+        teacher_id=teacher.id,
+        teacher_name=teacher.full_name,
         created_by=current_user.id,
     )
 
