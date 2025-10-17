@@ -24,7 +24,7 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
         teacher_id=group.teacher_id
     )
 
-    # O‘qituvchilarni bog‘lash (teacher_id list)
+    # Oqituvchilarni boglash (teacher_id list)
     if group.teacher_id:
         teachers = db.query(User).filter(
             User.id.in_([group.teacher_id]), User.role == UserRole.teacher
@@ -55,7 +55,7 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
 def get_groups(db: Session = Depends(get_db)):
     groups = db.query(Group).options(
         joinedload(Group.course),
-        joinedload(Group.teachers),
+        joinedload(Group.teacher),
         joinedload(Group.students),
     ).all()
     return groups
