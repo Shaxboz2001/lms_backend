@@ -233,14 +233,20 @@ class Course(Base):
     description = Column(Text, nullable=True)
     price = Column(Float, default=0)
     start_date = Column(Date, nullable=True)
+
+    # yaratuvchi foydalanuvchi (masalan, admin yoki teacher)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
 
-    # Asosiy o‘qituvchi
+    # asosiy o‘qituvchi
     teacher_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     teacher_name = Column(String, nullable=True)
 
     # Aloqalar
+    creator = relationship("User", back_populates="created_courses", foreign_keys=[created_by])
     teacher = relationship("User", foreign_keys=[teacher_id])
+
+    # studentlar ro‘yxati uchun
+    students = relationship("StudentCourse", back_populates="course")
 
 
 # ==============================
