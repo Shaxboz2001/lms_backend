@@ -121,16 +121,17 @@ class Group(Base):
     description = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # Relationships
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=True)
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    # Aloqalar
+    course = relationship("Course")
+    teacher = relationship("User", foreign_keys=[teacher_id])
     students = relationship("User", secondary=group_students, back_populates="groups_as_student")
-    teachers = relationship("User", secondary=group_teachers, back_populates="groups_as_teacher")
 
     attendances = relationship("Attendance", back_populates="group")
     payments = relationship("Payment", back_populates="group")
     tests = relationship("Test", back_populates="group")
-
-    course_id = Column(Integer, ForeignKey("courses.id"), nullable=True)
-    course = relationship("Course")
 
 
 # ==============================

@@ -140,7 +140,7 @@ class GroupResponse(BaseModel):
     created_at: datetime
     course_id: Optional[int] = None
     course: Optional[CourseOut] = None
-    teachers: Optional[UserResponse]
+    teacher: Optional[UserResponse] = None
     students: Optional[List[UserResponse]] = []
 
     class Config:

@@ -21,6 +21,7 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
         name=group.name,
         description=group.description,
         course_id=group.course_id,
+        teacher_id=group.teacher_id
     )
 
     # O‘qituvchilarni bog‘lash (teacher_id list)
