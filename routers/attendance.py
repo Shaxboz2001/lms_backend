@@ -80,7 +80,7 @@ def get_group_report(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    if current_user.role == UserRole.teacher and current_user not in group.teachers:
+    if current_user.role == UserRole.teacher and current_user != group.teacher:
         raise HTTPException(status_code=403, detail="Not allowed to view this group's attendance")
 
     today = datetime.utcnow()
