@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from .dependencies import get_db
 from .models import Group, Course, User, UserRole, StudentCourse
-from .schemas import GroupCreate, GroupUpdate, GroupResponse
+from .schemas import GroupCreate, GroupUpdate, GroupResponse, UserResponse
 from typing import List
 
 groups_router = APIRouter(prefix="/groups", tags=["Groups"])
@@ -162,3 +162,27 @@ def get_students_for_course(course_id: int, db: Session = Depends(get_db)):
         .all()
     )
     return students
+
+# routers/groups.py
+@groups_router.get("/{group_id}/students/", response_model=List[UserResponse])
+def get_students_by_group(group_id: int, db: Session = Depends(get_db)):
+    # 1️⃣ Avvalo group mavjudligini tekshiramiz
+    group_exists = db.query(Group).filter(Group.id == group_id).first()
+    if not group_exists:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    # 2️⃣ group_students jadvalidan student_id larni olish
+    student_ids = db.query(User.student_id).filter(
+        User.group_id == group_id
+    ).all()
+
+    # [(1,), (2,), (5,)] ko‘rinishida bo‘ladi -> flatten qilamiz
+    student_ids = [sid[0] for sid in student_ids]
+
+    if not student_ids:
+        return []  # Guruhda student yo‘q
+
+    # 3️⃣ Users jadvalidan studentlarni olish
+    students = db.query(User).filter(User.id.in_(student_ids)).all()
+    return students
+
