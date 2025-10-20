@@ -214,17 +214,20 @@ def get_students_for_course(course_id: int, db: Session = Depends(get_db)):
 # ------------------------------
 @groups_router.get("/{group_id}/students/", response_model=List[UserResponse])
 def get_students_by_group(group_id: int, db: Session = Depends(get_db)):
-    # guruh borligini tekshirish
+    # Guruhni topamiz
     group = db.query(Group).filter(Group.id == group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # group_students jadvalidan student_id larni olish
-    stmt = select(group_students.c.student_id).where(group_students.c.group_id == group_id)
-    student_ids = [row[0] for row in db.execute(stmt).all()]
+    # Shu guruhga tegishli kursni aniqlaymiz
+    course_id = group.course_id
 
-    if not student_ids:
-        return []
+    # Faqat shu kursga yozilgan studentlarni olamiz
+    students = (
+        db.query(User)
+        .filter(User.role == UserRole.student, User.course_id == course_id)
+        .all()
+    )
 
-    students = db.query(User).filter(User.id.in_(student_ids), User.role == UserRole.student).all()
     return students
+
