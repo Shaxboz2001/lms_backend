@@ -30,7 +30,7 @@ def create_attendance(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    if current_user.role == UserRole.teacher and current_user not in group.teachers:
+    if current_user.role == UserRole.teacher and current_user != group.teachers:
         raise HTTPException(status_code=403, detail="You can only add attendance for your groups")
 
     attendance_date = date_ or datetime.utcnow().date()
