@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 from .dependencies import get_db
 from .models import Group, Course, User, UserRole, StudentCourse, group_students
