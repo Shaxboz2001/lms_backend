@@ -14,12 +14,11 @@ teachers_router = APIRouter(
 
 @teachers_router.get("/groups/", response_model=List[GroupResponse])
 def get_teacher_groups(
-        current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     if current_user.role != "teacher":
         raise HTTPException(status_code=403, detail="Faqat teacherlar uchun")
 
-    groups = db.query(Group).join(Group.teacher) \
-        .filter(User.id == current_user.id).all()
+    groups = db.query(Group).filter(Group.teacher_id == current_user.id).all()
     return groups
