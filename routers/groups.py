@@ -172,7 +172,7 @@ def get_students_by_group(group_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Group not found")
 
     # 2️⃣ group_students jadvalidan student_id larni olish
-    student_ids = db.query(User.student_id).filter(
+    student_ids = db.query(User.id).filter(
         User.group_id == group_id
     ).all()
 
