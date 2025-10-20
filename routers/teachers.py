@@ -20,6 +20,6 @@ def get_teacher_groups(
     if current_user.role != "teacher":
         raise HTTPException(status_code=403, detail="Faqat teacherlar uchun")
 
-    groups = db.query(Group).join(Group.teachers) \
+    groups = db.query(Group).join(Group.teacher) \
         .filter(User.id == current_user.id).all()
     return groups
