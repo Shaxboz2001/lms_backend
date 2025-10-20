@@ -55,6 +55,7 @@ class UserCreate(BaseModel):
     age: Optional[int] = None
     group_id: Optional[int] = None
     teacher_id: Optional[int] = None
+    course_id: Optional[int] = None  # ✅ Shuni qo‘sh
 
 
 class UserUpdate(BaseModel):
