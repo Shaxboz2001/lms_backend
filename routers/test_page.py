@@ -303,3 +303,66 @@ def get_detailed_test_result(
         "details": detailed_result
     }
 
+# ✅ Student o‘zining test natijasini ko‘rishi uchun
+@tests_router.get("/{test_id}/my_result")
+def get_my_result(
+    test_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != UserRole.student:
+        raise HTTPException(status_code=403, detail="Faqat student uchun")
+
+    # testni topamiz
+    test = db.query(Test).filter(Test.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test topilmadi")
+
+    # studentning so‘nggi urinish vaqtini topamiz
+    last_attempt_time = (
+        db.query(func.max(StudentAnswer.submitted_at))
+        .filter(StudentAnswer.student_id == current_user.id)
+        .filter(
+            StudentAnswer.question_id.in_(
+                db.query(Question.id).filter(Question.test_id == test_id)
+            )
+        )
+        .scalar()
+    )
+
+    if not last_attempt_time:
+        raise HTTPException(status_code=404, detail="Siz bu testni hali topshirmagansiz")
+
+    # shu urinishdagi javoblarini olish
+    answers = (
+        db.query(StudentAnswer)
+        .filter(
+            StudentAnswer.student_id == current_user.id,
+            StudentAnswer.question_id.in_(
+                db.query(Question.id).filter(Question.test_id == test_id)
+            ),
+            func.date_trunc('second', StudentAnswer.submitted_at)
+            == func.date_trunc('second', last_attempt_time)
+        )
+        .all()
+    )
+
+    total = db.query(Question).filter(Question.test_id == test_id).count()
+
+    # to‘g‘ri javoblarni sanaymiz
+    correct = 0
+    for a in answers:
+        opt = db.query(Option).filter(Option.id == a.selected_option_id).first()
+        if opt and opt.is_correct:
+            correct += 1
+
+    return {
+        "test_id": test.id,
+        "test_name": test.title,
+        "student_name": current_user.full_name,
+        "score": correct,
+        "total": total,
+        "submitted_at": last_attempt_time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
