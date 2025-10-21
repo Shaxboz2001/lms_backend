@@ -66,11 +66,7 @@ class User(Base):
     status = Column(Enum(StudentStatus), default=StudentStatus.interested)
 
     # Relationships
-    groups_as_teacher = relationship(
-        "Group",
-        secondary="group_teachers",
-        back_populates="teacher"
-    )
+    groups_as_teacher = relationship("Group", back_populates="teacher")
     groups_as_student = relationship(
         "Group",
         secondary="group_students",
@@ -126,7 +122,8 @@ class Group(Base):
 
     # Aloqalar
     course = relationship("Course")
-    teacher = relationship("User", foreign_keys=[teacher_id])
+    # 🔹 Aloqalar
+    teacher = relationship("User", back_populates="groups_as_teacher")
     students = relationship("User", secondary=group_students, back_populates="groups_as_student")
 
     attendances = relationship("Attendance", back_populates="group")
