@@ -213,3 +213,92 @@ def get_test_results(
 
     return {"test_name": test.title, "results": output}
 
+@tests_router.get("/{test_id}/detailed_result/{student_id}")
+def get_detailed_test_result(
+    test_id: int,
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 1️⃣ Testni topamiz
+    test = db.query(Test).filter(Test.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test topilmadi")
+
+    # 2️⃣ Faqat testni yaratgan teacher yoki student o‘zi kirishi mumkin
+    if current_user.role == UserRole.teacher:
+        if test.created_by != current_user.id:
+            raise HTTPException(status_code=403, detail="Siz bu testni ko‘ra olmaysiz")
+    elif current_user.role == UserRole.student:
+        if current_user.id != student_id:
+            raise HTTPException(status_code=403, detail="Siz faqat o‘zingizning natijangizni ko‘ra olasiz")
+    else:
+        raise HTTPException(status_code=403, detail="Ruxsat yo‘q")
+
+    # 3️⃣ Testdagi savollarni olish
+    questions = db.query(Question).filter(Question.test_id == test_id).all()
+
+    # 4️⃣ Studentning eng so‘nggi urinish vaqtini topamiz
+    last_attempt_time = (
+        db.query(func.max(StudentAnswer.submitted_at))
+        .filter(StudentAnswer.student_id == student_id)
+        .filter(StudentAnswer.question_id.in_([q.id for q in questions]))
+        .scalar()
+    )
+
+    if not last_attempt_time:
+        raise HTTPException(status_code=404, detail="Student hali bu testni topshirmagan")
+
+    # 5️⃣ Shu urinishdagi barcha javoblarini olish
+    student_answers = (
+        db.query(StudentAnswer)
+        .filter(
+            StudentAnswer.student_id == student_id,
+            StudentAnswer.question_id.in_([q.id for q in questions]),
+            func.date_trunc('second', StudentAnswer.submitted_at) == func.date_trunc('second', last_attempt_time)
+        )
+        .all()
+    )
+
+    # 6️⃣ Batafsil natijani tuzamiz
+    detailed_result = []
+    for q in questions:
+        options = db.query(Option).filter(Option.question_id == q.id).all()
+
+        selected_answer = next((a for a in student_answers if a.question_id == q.id), None)
+        selected_option_id = selected_answer.selected_option_id if selected_answer else None
+
+        # To‘g‘ri javobni aniqlaymiz
+        correct_option = next((o for o in options if o.is_correct), None)
+
+        detailed_result.append({
+            "question_text": q.text,
+            "options": [
+                {
+                    "id": o.id,
+                    "text": o.text,
+                    "is_correct": bool(o.is_correct),
+                    "is_selected": (o.id == selected_option_id)
+                } for o in options
+            ],
+            "is_answer_correct": (
+                correct_option and selected_option_id == correct_option.id
+            )
+        })
+
+    # 7️⃣ Yakuniy hisob
+    correct_count = sum(1 for q in detailed_result if q["is_answer_correct"])
+    total = len(detailed_result)
+    percentage = round((correct_count / total) * 100, 2)
+
+    return {
+        "test_name": test.title,
+        "student_id": student_id,
+        "student_name": db.query(User.full_name).filter(User.id == student_id).scalar(),
+        "submitted_at": last_attempt_time.strftime("%Y-%m-%d %H:%M:%S"),
+        "correct_count": correct_count,
+        "total": total,
+        "percentage": percentage,
+        "details": detailed_result
+    }
+
