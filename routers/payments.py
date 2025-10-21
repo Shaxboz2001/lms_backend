@@ -2,7 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from typing import List, Optional
-from datetime import date
+from datetime import date, datetime
+from enum import Enum
+
 from .dependencies import get_db, get_current_user
 from .schemas import PaymentResponse, UserResponse, GroupResponse
 from .models import User, UserRole, Payment, Group
@@ -11,6 +13,16 @@ payments_router = APIRouter(
     prefix="/payments",
     tags=["Payments"]
 )
+
+
+# ---------------------------------
+# Enum for Payment Status
+# ---------------------------------
+class PaymentStatus(str, Enum):
+    paid = "paid"
+    unpaid = "unpaid"
+    partial = "partial"
+
 
 # ------------------------------
 # GET Payments
@@ -40,7 +52,15 @@ def get_payments(
     else:
         payments = []
 
+    # overdue aniqlaymiz
+    for p in payments:
+        if p.due_date and p.due_date < date.today() and p.status != "paid":
+            p.is_overdue = True
+        else:
+            p.is_overdue = False
+
     return payments
+
 
 # ------------------------------
 # CREATE Payment
@@ -52,11 +72,13 @@ def create_payment(
     student_id: Optional[int] = Body(None),
     teacher_id: Optional[int] = Body(None),
     group_id: Optional[int] = Body(None),
-    month: Optional[str] = Body(None),  # yangi maydon
+    month: Optional[str] = Body(None),
+    status: Optional[PaymentStatus] = Body(PaymentStatus.paid),
+    debt_amount: Optional[float] = Body(0),
+    due_date: Optional[date] = Body(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Role-based restrictions
     if current_user.role == UserRole.student:
         raise HTTPException(status_code=403, detail="Students cannot create payments")
 
@@ -68,35 +90,57 @@ def create_payment(
             if not group or current_user not in group.teachers:
                 raise HTTPException(status_code=403, detail="You can only add payments for your groups")
 
-    # Agar month berilmagan bo‘lsa, hozirgi oyni default qilamiz
     if not month:
-        month = date.today().strftime("%Y-%m")  # misol: '2025-10'
+        month = date.today().strftime("%Y-%m")
 
-    # Create payment
     payment = Payment(
         amount=amount,
         description=description,
         student_id=student_id,
         teacher_id=teacher_id,
         group_id=group_id,
-        month=month  # saqlaymiz
+        month=month,
+        status=status.value,
+        debt_amount=debt_amount,
+        due_date=due_date,
+        created_at=datetime.now()
     )
 
     db.add(payment)
     db.commit()
     db.refresh(payment)
 
-    # Return full student/teacher/group info using from_orm
     return PaymentResponse(
         id=payment.id,
         amount=payment.amount,
         description=payment.description,
         created_at=payment.created_at,
         month=payment.month,
+        status=payment.status,
+        debt_amount=payment.debt_amount,
+        due_date=payment.due_date,
         student=UserResponse.from_orm(payment.student) if payment.student else None,
         teacher=UserResponse.from_orm(payment.teacher) if payment.teacher else None,
         group=GroupResponse.from_orm(payment.group) if payment.group else None,
-        student_id=payment.student_id,
-        teacher_id=payment.teacher_id,
-        group_id=payment.group_id
     )
+
+
+# ------------------------------
+# GET Only Debtors
+# ------------------------------
+@payments_router.get("/debts", response_model=List[PaymentResponse])
+def get_debts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    debts = db.query(Payment).filter(
+        Payment.status != "paid"
+    ).all()
+
+    for p in debts:
+        if p.due_date and p.due_date < date.today():
+            p.is_overdue = True
+        else:
+            p.is_overdue = False
+
+    return debts

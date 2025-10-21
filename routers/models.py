@@ -137,18 +137,32 @@ class Group(Base):
 # ==============================
 # Payment model
 # ==============================
+class PaymentStatus(str, enum.Enum):
+    paid = "paid"          # to‘liq to‘langan
+    partial = "partial"    # qisman to‘langan
+    unpaid = "unpaid"      # umuman to‘lanmagan
+
+
 class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True)
-    amount = Column(Float, nullable=False)
+    amount = Column(Float, nullable=False)                      # to‘langan summa
     description = Column(String, nullable=True)
     student_id = Column(Integer, ForeignKey("users.id"))
     teacher_id = Column(Integer, ForeignKey("users.id"))
     group_id = Column(Integer, ForeignKey("groups.id"))
-    month = Column(String(7), nullable=True)
+    month = Column(String(7), nullable=True)                    # masalan "2025-10"
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # 🔥 YANGI MAYDONLAR
+    total_due = Column(Float, default=0)                        # shu oy uchun to‘lanishi kerak summa
+    debt_amount = Column(Float, default=0)                      # qarzdorlik summasi
+    status = Column(Enum(PaymentStatus), default=PaymentStatus.unpaid)
+    due_date = Column(Date, nullable=True)                      # to‘lov muddati
+    is_overdue = Column(Integer, default=0)                     # 1 = muddati o‘tgan, 0 = o‘z vaqtida
+
+    # Aloqalar
     student = relationship("User", foreign_keys=[student_id], back_populates="payments_as_student")
     teacher = relationship("User", foreign_keys=[teacher_id], back_populates="payments_as_teacher")
     group = relationship("Group", back_populates="payments")
