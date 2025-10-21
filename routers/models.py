@@ -40,7 +40,12 @@ group_students = Table(
     Column("group_id", Integer, ForeignKey("groups.id")),
     Column("student_id", Integer, ForeignKey("users.id"))
 )
-
+group_teachers = Table(
+    "group_teachers",
+    Base.metadata,
+    Column("group_id", Integer, ForeignKey("groups.id")),
+    Column("teacher_id", Integer, ForeignKey("users.id"))
+)
 # ==============================
 # USER MODEL
 # ==============================
