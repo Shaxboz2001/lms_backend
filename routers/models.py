@@ -1,13 +1,15 @@
 from typing import Optional
-from sqlalchemy import Column, Integer, String, Enum, Float, ForeignKey, DateTime, Table, Text, Date
+from sqlalchemy import (
+    Column, Integer, String, Enum, Float, ForeignKey,
+    DateTime, Table, Text, Date
+)
 from sqlalchemy.orm import relationship
 from .database import Base
 from datetime import datetime
 import enum
 
-
 # ==============================
-# User roles
+# ENUMS
 # ==============================
 class UserRole(str, enum.Enum):
     admin = "admin"
@@ -16,14 +18,17 @@ class UserRole(str, enum.Enum):
     student = "student"
 
 
-# ==============================
-# Student status
-# ==============================
 class StudentStatus(str, enum.Enum):
     interested = "interested"
     studying = "studying"
     left = "left"
     graduated = "graduated"
+
+
+class PaymentStatus(str, enum.Enum):
+    paid = "paid"
+    partial = "partial"
+    unpaid = "unpaid"
 
 
 # ==============================
@@ -36,16 +41,8 @@ group_students = Table(
     Column("student_id", Integer, ForeignKey("users.id"))
 )
 
-group_teachers = Table(
-    "group_teachers",
-    Base.metadata,
-    Column("group_id", Integer, ForeignKey("groups.id")),
-    Column("teacher_id", Integer, ForeignKey("users.id"))
-)
-
-
 # ==============================
-# User model
+# USER MODEL
 # ==============================
 class User(Base):
     __tablename__ = "users"
@@ -59,20 +56,26 @@ class User(Base):
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
     age = Column(Integer, nullable=True)
-    group_id = Column(Integer, ForeignKey("groups.id"), nullable=True)
-    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     subject = Column(String, nullable=True)
     fee = Column(Float, nullable=True, default=0.0)
     status = Column(Enum(StudentStatus), default=StudentStatus.interested)
 
-    # Relationships
-    groups_as_teacher = relationship("Group", back_populates="teacher")
+    # 🔹 Relationships
+    # Teacher bo‘lgan user -> group’lar
+    groups_as_teacher = relationship(
+        "Group",
+        back_populates="teacher",
+        foreign_keys="Group.teacher_id"
+    )
+
+    # Student bo‘lgan user -> group’lar
     groups_as_student = relationship(
         "Group",
-        secondary="group_students",
+        secondary=group_students,
         back_populates="students"
     )
 
+    # Attendances
     attendances_as_student = relationship(
         "Attendance",
         foreign_keys="Attendance.student_id",
@@ -84,6 +87,7 @@ class User(Base):
         back_populates="teacher"
     )
 
+    # Payments
     payments_as_student = relationship(
         "Payment",
         foreign_keys="Payment.student_id",
@@ -95,6 +99,7 @@ class User(Base):
         back_populates="teacher"
     )
 
+    # Courses
     created_courses = relationship(
         "Course",
         back_populates="creator",
@@ -107,7 +112,7 @@ class User(Base):
 
 
 # ==============================
-# Group model
+# GROUP MODEL
 # ==============================
 class Group(Base):
     __tablename__ = "groups"
@@ -118,12 +123,11 @@ class Group(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     course_id = Column(Integer, ForeignKey("courses.id"), nullable=True)
-    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
-    # Aloqalar
-    course = relationship("Course")
-    # 🔹 Aloqalar
-    teacher = relationship("User", back_populates="groups_as_teacher")
+    # 🔹 Relationships
+    course = relationship("Course", back_populates="groups")
+    teacher = relationship("User", back_populates="groups_as_teacher", foreign_keys=[teacher_id])
     students = relationship("User", secondary=group_students, back_populates="groups_as_student")
 
     attendances = relationship("Attendance", back_populates="group")
@@ -132,41 +136,34 @@ class Group(Base):
 
 
 # ==============================
-# Payment model
+# PAYMENT MODEL
 # ==============================
-class PaymentStatus(str, enum.Enum):
-    paid = "paid"          # to‘liq to‘langan
-    partial = "partial"    # qisman to‘langan
-    unpaid = "unpaid"      # umuman to‘lanmagan
-
-
 class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True)
-    amount = Column(Float, nullable=False)                      # to‘langan summa
+    amount = Column(Float, nullable=False)
     description = Column(String, nullable=True)
     student_id = Column(Integer, ForeignKey("users.id"))
     teacher_id = Column(Integer, ForeignKey("users.id"))
     group_id = Column(Integer, ForeignKey("groups.id"))
-    month = Column(String(7), nullable=True)                    # masalan "2025-10"
+    month = Column(String(7), nullable=True)  # 2025-10
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # 🔥 YANGI MAYDONLAR
-    total_due = Column(Float, default=0)                        # shu oy uchun to‘lanishi kerak summa
-    debt_amount = Column(Float, default=0)                      # qarzdorlik summasi
+    total_due = Column(Float, default=0)
+    debt_amount = Column(Float, default=0)
     status = Column(Enum(PaymentStatus), default=PaymentStatus.unpaid)
-    due_date = Column(Date, nullable=True)                      # to‘lov muddati
-    is_overdue = Column(Integer, default=0)                     # 1 = muddati o‘tgan, 0 = o‘z vaqtida
+    due_date = Column(Date, nullable=True)
+    is_overdue = Column(Integer, default=0)
 
-    # Aloqalar
+    # 🔹 Relationships
     student = relationship("User", foreign_keys=[student_id], back_populates="payments_as_student")
     teacher = relationship("User", foreign_keys=[teacher_id], back_populates="payments_as_teacher")
     group = relationship("Group", back_populates="payments")
 
 
 # ==============================
-# Attendance model
+# ATTENDANCE MODEL
 # ==============================
 class Attendance(Base):
     __tablename__ = "attendance"
@@ -176,7 +173,7 @@ class Attendance(Base):
     teacher_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
     date = Column(DateTime, default=datetime.utcnow)
-    status = Column(String, default="present")  # present / absent / late
+    status = Column(String, default="present")
 
     student = relationship("User", foreign_keys=[student_id], back_populates="attendances_as_student")
     teacher = relationship("User", foreign_keys=[teacher_id], back_populates="attendances_as_teacher")
@@ -184,7 +181,7 @@ class Attendance(Base):
 
 
 # ==============================
-# Test models
+# TEST MODEL
 # ==============================
 class Test(Base):
     __tablename__ = "tests"
@@ -206,7 +203,7 @@ class Question(Base):
     id = Column(Integer, primary_key=True, index=True)
     test_id = Column(Integer, ForeignKey("tests.id"))
     text = Column(String, nullable=False)
-    type = Column(String, default="single")  # single / multiple
+    type = Column(String, default="single")
 
     test = relationship("Test", back_populates="questions")
     options = relationship("Option", back_populates="question")
@@ -218,7 +215,7 @@ class Option(Base):
     id = Column(Integer, primary_key=True, index=True)
     question_id = Column(Integer, ForeignKey("questions.id"))
     text = Column(String, nullable=False)
-    is_correct = Column(Integer, default=0)  # 1 = true, 0 = false
+    is_correct = Column(Integer, default=0)
 
     question = relationship("Question", back_populates="options")
 
@@ -234,7 +231,7 @@ class StudentAnswer(Base):
 
 
 # ==============================
-# Course model
+# COURSE MODEL
 # ==============================
 class Course(Base):
     __tablename__ = "courses"
@@ -246,23 +243,19 @@ class Course(Base):
     price = Column(Float, default=0)
     start_date = Column(Date, nullable=True)
 
-    # yaratuvchi foydalanuvchi (masalan, admin yoki teacher)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-
-    # asosiy o‘qituvchi
     teacher_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     teacher_name = Column(String, nullable=True)
 
-    # Aloqalar
     creator = relationship("User", back_populates="created_courses", foreign_keys=[created_by])
     teacher = relationship("User", foreign_keys=[teacher_id])
 
-    # studentlar ro‘yxati uchun
     students = relationship("StudentCourse", back_populates="course")
+    groups = relationship("Group", back_populates="course")  # 🔥 course–group bog‘lanishi
 
 
 # ==============================
-# StudentCourse model
+# STUDENT COURSE MODEL
 # ==============================
 class StudentCourse(Base):
     __tablename__ = "student_courses"
