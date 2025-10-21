@@ -208,7 +208,8 @@ def get_test_results(
             "group_name": group_name,
             "score": correct,
             "total": total_questions,
-            "submitted_at": attempt.attempt_time.strftime("%Y-%m-%d %H:%M:%S")
+            "submitted_at": attempt.attempt_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "student_id": attempt.student_id
         })
 
     return {"test_name": test.title, "results": output}
