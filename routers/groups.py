@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import Session, joinedload
 from typing import List
 
 from .dependencies import get_db
-from .models import Group, Course, User, UserRole, StudentCourse, group_students
+from .models import Group, Course, User, UserRole, StudentCourse, group_students, Payment, Attendance, Test
 from .schemas import GroupCreate, GroupUpdate, GroupResponse, UserResponse
 
 groups_router = APIRouter(prefix="/groups", tags=["Groups"])
@@ -172,10 +172,15 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # 1️⃣ Shu guruhdagi barcha foydalanuvchilarning group_id sini NULL qilamiz
-    db.query(User).filter(User.group_id == group_id).update({User.group_id: None})
+    # 1️⃣ group_students jadvalidan bog‘liqliklarni o‘chirish
+    db.execute(delete(group_students).where(group_students.c.group_id == group_id))
 
-    # 2️⃣ Guruhni o‘chiramiz
+    # 2️⃣ shu guruhga bog‘langan to‘lovlar, davomatlar, testlar bo‘lsa — ixtiyoriy o‘chirish
+    db.query(Payment).filter(Payment.group_id == group_id).delete()
+    db.query(Attendance).filter(Attendance.group_id == group_id).delete()
+    db.query(Test).filter(Test.group_id == group_id).delete()
+
+    # 3️⃣ endi guruhni o‘chir
     db.delete(group)
     db.commit()
 
