@@ -23,7 +23,9 @@ origins = [
     "http://127.0.0.1:5173",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://ilmnajot-lms.vercel.app"
+    "https://ilmnajot-lms.vercel.app",
+    "https://www.ilmnajot-lms.vercel.app",
+    "http://localhost:5173",  # dev uchun
 ]
 
 app.add_middleware(
