@@ -172,11 +172,15 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # Agar kerak bo'lsa, avval group_students many-to-many yozuvlarini o'chirish mumkin,
-    # lekin SQLAlchemy cascade sozlamalaringizga qarab bu avtomatik bo'lishi mumkin.
+    # 1️⃣ Shu guruhdagi barcha foydalanuvchilarning group_id sini NULL qilamiz
+    db.query(User).filter(User.group_id == group_id).update({User.group_id: None})
+
+    # 2️⃣ Guruhni o‘chiramiz
     db.delete(group)
     db.commit()
+
     return {"message": "Group deleted successfully"}
+
 
 
 # ------------------------------
