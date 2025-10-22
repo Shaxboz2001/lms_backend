@@ -14,7 +14,7 @@ auth_router = APIRouter(prefix="/auth", tags=["Auth"])
 # ------------------------------
 # Sozlamalar
 # ------------------------------
-SECRET_KEY = "2001"  # ⚠️ Buni .env faylga o‘tkazish kerak
+SECRET_KEY = "2001"  # ⚠️ Render uchun ENV dan olish yaxshiroq
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
@@ -49,7 +49,10 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
     if db_user:
         raise HTTPException(status_code=400, detail="❌ Username already exists")
 
-    hashed_pw = pwd_context.hash(user.password)
+    # ⚠️ bcrypt 72 baytdan uzun parollarni qabul qilmaydi
+    safe_password = user.password[:72]
+    hashed_pw = pwd_context.hash(safe_password)
+
     new_user = User(
         username=user.username,
         password=hashed_pw,
@@ -76,14 +79,28 @@ class LoginRequest(BaseModel):
 @auth_router.post("/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == request.username).first()
-    if not user or not pwd_context.verify(request.password, user.password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Foydalanuvchi topilmadi")
+
+    # ⚠️ 72 bayt limitini inobatga olamiz
+    safe_password = request.password[:72]
+
+    try:
+        valid = pwd_context.verify(safe_password, user.password)
+    except Exception as e:
+        print(f"❌ [LOGIN ERROR] bcrypt verify xato: {e}")
+        raise HTTPException(status_code=500, detail="Parolni tekshirishda xatolik")
+
+    if not valid:
+        raise HTTPException(status_code=401, detail="Noto‘g‘ri login yoki parol")
 
     access_token = create_access_token({"sub": str(user.id)})
+
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "role": user.role.value,
+        "role": user.role.value if hasattr(user.role, 'value') else user.role,
         "userid": user.id
     }
 
@@ -112,6 +129,7 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
 
 # ------------------------------
 # Current user endpoint (test)
