@@ -102,3 +102,37 @@ def teacher_my_courses(db: Session = Depends(get_db), current_user: User = Depen
     if current_user.role != UserRole.teacher:
         raise HTTPException(status_code=403, detail="Faqat teacherlar uchun")
     return db.query(Course).filter(Course.teacher_id == current_user.id).all()
+
+# GET student's enrolled courses
+@courses_router.get("/student/{student_id}", response_model=List[CourseOut])
+def get_student_courses(student_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Faqat admin, manager yoki o‘sha studentning o‘zi kirishi mumkin
+    if current_user.role not in [UserRole.admin, UserRole.manager] and current_user.id != student_id:
+        raise HTTPException(status_code=403, detail="Siz bu talabaning kurslarini ko‘ra olmaysiz")
+
+    courses = (
+        db.query(Course)
+        .join(StudentCourse, Course.id == StudentCourse.course_id)
+        .filter(StudentCourse.student_id == student_id)
+        .options(joinedload(Course.teacher))
+        .all()
+    )
+
+    return courses
+
+# GET teacher's courses by ID (admin, manager yoki teacher o‘zi ko‘rsa bo‘ladi)
+@courses_router.get("/teacher/{teacher_id}", response_model=List[CourseOut])
+def get_teacher_courses(teacher_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Faqat admin, manager yoki o‘sha teacherning o‘zi ko‘ra oladi
+    if current_user.role not in [UserRole.admin, UserRole.manager] and current_user.id != teacher_id:
+        raise HTTPException(status_code=403, detail="Siz bu o‘qituvchining kurslarini ko‘ra olmaysiz")
+
+    courses = (
+        db.query(Course)
+        .filter(Course.teacher_id == teacher_id)
+        .options(joinedload(Course.students))
+        .all()
+    )
+
+    return courses
+
