@@ -64,7 +64,7 @@ class User(Base):
     subject = Column(String, nullable=True)
     fee = Column(Float, nullable=True, default=0.0)
     status = Column(Enum(StudentStatus), default=StudentStatus.interested)
-
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     group_id = Column(Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
 
     # 🔹 Relationships
