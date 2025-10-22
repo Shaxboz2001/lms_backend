@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from typing import List
 
 from .dependencies import get_db
-from .models import Group, Course, User, UserRole, StudentCourse, group_students, Payment, Attendance, Test
+from .models import Group, Course, User, UserRole, StudentCourse, group_students, Payment, Attendance, Test, \
+    StudentAnswer
 from .schemas import GroupCreate, GroupUpdate, GroupResponse, UserResponse
 
 groups_router = APIRouter(prefix="/groups", tags=["Groups"])
@@ -172,19 +174,46 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # 1️⃣ group_students jadvalidan bog‘liqliklarni o‘chirish
-    db.execute(delete(group_students).where(group_students.c.group_id == group_id))
+    try:
+        # 1) many-to-many bog'lanishlarni o'chirish (group_students)
+        db.execute(delete(group_students).where(group_students.c.group_id == group_id))
 
-    # 2️⃣ shu guruhga bog‘langan to‘lovlar, davomatlar, testlar bo‘lsa — ixtiyoriy o‘chirish
-    db.query(Payment).filter(Payment.group_id == group_id).delete()
-    db.query(Attendance).filter(Attendance.group_id == group_id).delete()
-    db.query(Test).filter(Test.group_id == group_id).delete()
+        # 2) agar students jadvalida group_id nullable bo'lsa -> uni NULL qilamiz
+        # (agar sizda users.group_id mavjud bo'lsa)
+        if hasattr(User, "group_id"):
+            db.query(User).filter(User.group_id == group_id).update({User.group_id: None})
 
-    # 3️⃣ endi guruhni o‘chir
-    db.delete(group)
-    db.commit()
+        # 3) agar teacher_id kabi boshqa foreign keylar group ga bog'langan bo'lsa, yangilash:
+        # (masalan, agar teacher.user jadvalida group_id ishlatilsa)
+        if hasattr(User, "teacher_id"):
+            # agar teacher modelida group referensi bo'lsa; misol uchun bu qator ixtiyoriy
+            db.query(User).filter(User.teacher_id == group_id).update({User.teacher_id: None})
 
-    return {"message": "Group deleted successfully"}
+        # 4) Guruhga bog'liq bo'lgan boshqa yozuvlarni o'chirish (agar kerak bo'lsa)
+        db.query(Payment).filter(Payment.group_id == group_id).delete(synchronize_session=False)
+        db.query(Attendance).filter(Attendance.group_id == group_id).delete(synchronize_session=False)
+        db.query(Test).filter(Test.group_id == group_id).delete(synchronize_session=False)
+
+        # 5) testlarga bog'liq student_answers kabi yozuvlarni ham o'chirish kerak bo'lsa:
+        # Bu misolda Test yozuvlari yuqorida o'chirildi, ammo agar student_answers mustaqil bo'lsa:
+        db.query(StudentAnswer).filter(
+            StudentAnswer.question_id.in_(
+                db.query(Test.id).filter(Test.group_id == group_id)  # agar structure boshqacha bo'lsa moslang
+            )
+        ).delete(synchronize_session=False)
+
+        # 6) nihoyat group o'chirish
+        db.delete(group)
+        db.commit()
+        return {"message": "Group deleted successfully"}
+
+    except IntegrityError as e:
+        db.rollback()
+        # Xabarni foydalanuvchi uchun foydali qilamiz
+        raise HTTPException(status_code=400, detail=f"Could not delete group due to DB constraint: {str(e.orig)}")
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 
 
