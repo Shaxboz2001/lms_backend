@@ -65,6 +65,8 @@ class User(Base):
     fee = Column(Float, nullable=True, default=0.0)
     status = Column(Enum(StudentStatus), default=StudentStatus.interested)
 
+    group_id = Column(Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
+
     # 🔹 Relationships
     # Teacher bo‘lgan user -> group’lar
     groups_as_teacher = relationship(
