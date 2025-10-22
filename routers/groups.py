@@ -175,15 +175,27 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Group not found")
 
     try:
-        # 1. Shu guruhdagi userlarning group_id ni NULL qilamiz
-        db.query(User).filter(User.group_id == group_id).update({User.group_id: None})
-        db.commit()
+        # 1) association (many-to-many) yozuvlarini o'chirish — agar kerak bo'lsa
+        # Bu yerda group_students - sqlalchemy.Table obyekti
+        db.execute(
+            group_students.delete().where(group_students.c.group_id == group_id)
+        )
 
-        # 2. Endi guruhni o‘chiramiz
+        # 2) Agar DBda `users.group_id` ustuni mavjud bo'lsa — uni NULL qilamiz.
+        # Modelda User.group_id bo'lmasa ham quyidagi yondashuv ishlaydi:
+        if "group_id" in User.__table__.c:
+            db.execute(
+                User.__table__.update().where(User.__table__.c.group_id == group_id).values(group_id=None)
+            )
+        else:
+            # agar siz boshqa nom bilan saqlagan bo'lsangiz, shu nomni ishlating yoki
+            # faqat association o'chirish yetarli bo'lishi mumkin.
+            pass
+
+        # 3) endi Group obyektini o'chiramiz
         db.delete(group)
         db.commit()
-
-        return {"message": "✅ Group deleted successfully"}
+        return {"message": "Group deleted successfully"}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Could not delete group: {str(e)}")
