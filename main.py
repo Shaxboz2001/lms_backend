@@ -14,7 +14,8 @@ from routers import (
     tests_router,
     users_router,
     dashboard_router,
-    reports_router
+    reports_router,
+    payroll_router
 )
 app = FastAPI(title="LMS Backend")
 
@@ -49,7 +50,7 @@ app.include_router(teachers_router)
 app.include_router(users_router)
 app.include_router(dashboard_router)
 app.include_router(reports_router)
-
+app.include_router(payroll_router)
 
 
 @app.get("/")

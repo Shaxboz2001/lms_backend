@@ -1,7 +1,7 @@
 from typing import Optional
 from sqlalchemy import (
     Column, Integer, String, Enum, Float, ForeignKey,
-    DateTime, Table, Text, Date
+    DateTime, Table, Text, Date, JSON
 )
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -274,3 +274,38 @@ class StudentCourse(Base):
 
     student = relationship("User", back_populates="enrolled_courses")
     course = relationship("Course", back_populates="students")
+
+# salary
+
+class SalarySetting(Base):
+    __tablename__ = "salary_settings"
+    id = Column(Integer, primary_key=True)
+    teacher_percent = Column(Float, default=50.0)     # percent for teachers from payments
+    manager_active_percent = Column(Float, default=10.0)  # percent per active student's payments
+    manager_new_percent = Column(Float, default=25.0)     # percent from new student's first payment
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, onupdate=datetime.utcnow, default=datetime.utcnow)
+
+class Payroll(Base):
+    __tablename__ = "payroll"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    role = Column(String, nullable=False)  # 'teacher' or 'manager'
+    month = Column(String, nullable=False)  # 'YYYY-MM'
+    earned = Column(Float, default=0.0)
+    deductions = Column(Float, default=0.0)
+    net = Column(Float, default=0.0)
+    status = Column(String, default="pending")  # pending | paid
+    details = Column(JSON, default={})
+    created_at = Column(DateTime, default=datetime.utcnow)
+    paid_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", backref="payrolls")
+
+class PayrollPayment(Base):
+    __tablename__ = "payroll_payments"
+    id = Column(Integer, primary_key=True)
+    payroll_id = Column(Integer, ForeignKey("payroll.id"), nullable=False)
+    paid_amount = Column(Float, nullable=False)
+    paid_by = Column(Integer, ForeignKey("users.id"))  # admin who paid
+    paid_at = Column(DateTime, default=datetime.utcnow)

@@ -10,9 +10,10 @@ from .test_page import tests_router
 from .users import users_router
 from .dashboard import dashboard_router
 from .reports import reports_router
+from .payroll import payroll_router
 
 __all__ = [
     "Base", "engine", "auth_router", "attend_router", "courses_router",
     "groups_router", "payments_router", "students_router", "teachers_router",
-    "tests_router", "users_router", "dashboard_router", "reports_router"
+    "tests_router", "users_router", "dashboard_router", "reports_router", "payroll_router"
 ]
