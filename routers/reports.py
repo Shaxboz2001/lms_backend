@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import cast, Date
 from sqlalchemy.orm import Session
 from datetime import date, timedelta
 from io import BytesIO
@@ -79,7 +80,7 @@ def get_payment_trend(db: Session = Depends(get_db), current_user: User = Depend
     data = []
     for i in range(6, -1, -1):
         d = today - timedelta(days=i)
-        payments = db.query(Payment).filter(Payment.created_at.cast(date) == d).all()
+        payments = db.query(Payment).filter(cast(Payment.created_at, Date) == d).all()
         total = sum(p.amount for p in payments)
         data.append({"date": d.strftime("%d-%m"), "total": total})
     return data
