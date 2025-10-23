@@ -5,8 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 from typing import List
 
 from .dependencies import get_db
-from .models import Group, Course, User, UserRole, StudentCourse, group_students, Payment, Attendance, Test, \
-    StudentAnswer
+from .models import Group, Course, User, UserRole, StudentCourse, group_students
 from .schemas import GroupCreate, GroupUpdate, GroupResponse, UserResponse
 
 groups_router = APIRouter(prefix="/groups", tags=["Groups"])
@@ -32,15 +31,15 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
         if not teacher:
             raise HTTPException(status_code=404, detail="Teacher not found")
 
-    # 3️⃣ Yangi guruh obyektini yaratish (teacher_id bilan ham ishlaydi)
+    # 3️⃣ Yangi guruh obyektini yaratish
     new_group = Group(
         name=group.name,
         description=group.description,
         course_id=group.course_id,
-        teacher_id=group.teacher_id  # foreign key sifatida saqlanadi
+        teacher_id=group.teacher_id
     )
 
-    # 4️⃣ Agar talabalar kelgan bo'lsa, ularni olish (validatsiya)
+    # 4️⃣ Talabalarni olish
     students = []
     if getattr(group, "student_ids", None):
         students = db.query(User).filter(
@@ -51,36 +50,29 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
         if not students:
             raise HTTPException(status_code=404, detail="No valid students found")
 
-    # 5️⃣ Guruh va bog'lanmalarni saqlash: avval group qo'shamiz,
-    # so'ng relationshiplar/esenrolllarni qo'shamiz
+    # 5️⃣ Guruhni saqlash
     db.add(new_group)
     db.commit()
     db.refresh(new_group)
 
-    # 6️⃣ Agar teacher obyekt mavjud bo'lsa, (relationship orqali) biriktirish — bu ixtiyoriy,
-    # lekin teacher_id allaqachon set qilingan. Agar xohlasangiz object ham biriktirish mumkin:
-    if teacher:
-        # teacher_id allaqachon to'g'ri, bu satr majburiy emas:
-        new_group.teacher_id = teacher.id
-
-    # 7️⃣ Talabalarni guruhga biriktirish va StudentCourse yozuvlarini qo'shish
+    # 6️⃣ Talabalarni guruhga biriktirish
     if students:
-        # relationship orqali assign qilamiz
         new_group.students = students
-
-        # Har bir student uchun StudentCourse (agar mavjud bo'lmasa) qo'shamiz:
         for student in students:
+            # StudentCourse yozuvini tekshirish
             exists = db.query(StudentCourse).filter(
                 StudentCourse.student_id == student.id,
                 StudentCourse.course_id == course.id
             ).first()
             if not exists:
-                enrollment = StudentCourse(student_id=student.id, course_id=course.id)
-                db.add(enrollment)
+                db.add(StudentCourse(student_id=student.id, course_id=course.id))
 
-        # Va agar studentlar uchun group_id maydonini yangilash kerak bo'lsa:
-        for student in students:
+            # group_id yangilash
             student.group_id = new_group.id
+
+            # 🟢 Statusni "studying" qilish
+            if hasattr(student, "status"):
+                student.status = "studying"
 
     db.commit()
     db.refresh(new_group)
@@ -114,15 +106,13 @@ def update_group(group_id: int, updated: GroupUpdate, db: Session = Depends(get_
     if updated.description is not None:
         group.description = updated.description
     if updated.course_id is not None:
-        # agar course o'zgarsa, kurs mavjudligini tekshirish foydali
         course = db.query(Course).filter(Course.id == updated.course_id).first()
         if not course:
             raise HTTPException(status_code=404, detail="Course not found")
         group.course_id = updated.course_id
 
-    # Teacher yangilash — yagona integer kutiladi
+    # Teacher yangilash
     if getattr(updated, "teacher_id", None) is not None:
-        # agar null (None) yuborilsa, teacherni olib tashlash
         if updated.teacher_id is None:
             group.teacher_id = None
         else:
@@ -134,9 +124,8 @@ def update_group(group_id: int, updated: GroupUpdate, db: Session = Depends(get_
                 raise HTTPException(status_code=404, detail="Teacher not found")
             group.teacher_id = teacher.id
 
-    # Talabalarni yangilash (to'liq qayta o'rnatish)
+    # Talabalarni yangilash
     if updated.student_ids is not None:
-        # agar bo'sh ro'yxat yuborilsa, students bo'sh qilinadi
         if len(updated.student_ids) == 0:
             group.students = []
         else:
@@ -148,7 +137,7 @@ def update_group(group_id: int, updated: GroupUpdate, db: Session = Depends(get_
                 raise HTTPException(status_code=404, detail="No valid students found")
             group.students = students
 
-            # kursga yozuvlar (StudentCourse) ham tekshiriladi/qo'shiladi
+            # Kursga yozilganligini tekshiramiz
             if group.course_id:
                 for student in students:
                     exists = db.query(StudentCourse).filter(
@@ -157,8 +146,11 @@ def update_group(group_id: int, updated: GroupUpdate, db: Session = Depends(get_
                     ).first()
                     if not exists:
                         db.add(StudentCourse(student_id=student.id, course_id=group.course_id))
-                    # va group_id maydonini yangilash
                     student.group_id = group.id
+
+                    # 🟢 Yangi o‘quvchi qo‘shilganda status = "studying"
+                    if hasattr(student, "status"):
+                        student.status = "studying"
 
     db.commit()
     db.refresh(group)
@@ -175,23 +167,17 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Group not found")
 
     try:
-        # 1) many-to-many bog'lanishlarini o'chirish (agar mavjud bo'lsa)
         db.execute(group_students.delete().where(group_students.c.group_id == group_id))
-
-        # 2) agar users jadvalida group_id ustuni bo'lsa uni NULL qilish
         if "group_id" in User.__table__.c:
             db.execute(
                 User.__table__.update().where(User.__table__.c.group_id == group_id).values(group_id=None)
             )
-
-        # 3) endi guruhni o'chirish
         db.delete(group)
         db.commit()
         return {"message": "Group deleted successfully"}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Could not delete group: {str(e)}")
-
 
 
 # ------------------------------
@@ -212,7 +198,6 @@ def get_teachers_for_course(course_id: int, db: Session = Depends(get_db)):
     return [teacher] if teacher else []
 
 
-# many-to-many asosida course ga yozilgan studentlarni olish
 @groups_router.get("/students/{course_id}", response_model=List[UserResponse])
 def get_students_for_course(course_id: int, db: Session = Depends(get_db)):
     students = (
@@ -225,19 +210,16 @@ def get_students_for_course(course_id: int, db: Session = Depends(get_db)):
 
 
 # ------------------------------
-# GET students by group (using group_students junction table)
+# GET students by group
 # ------------------------------
 @groups_router.get("/{group_id}/students/", response_model=List[UserResponse])
 def get_students_by_group(group_id: int, db: Session = Depends(get_db)):
-    # 1️⃣ Guruhni topamiz
     group = db.query(Group).filter(Group.id == group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # 2️⃣ Shu guruhga tegishli kursni aniqlaymiz
     course_id = group.course_id
 
-    # 3️⃣ Many-to-many orqali o‘sha kursga yozilgan studentlarni olish
     students = (
         db.query(User)
         .join(StudentCourse, StudentCourse.student_id == User.id)
@@ -247,6 +229,4 @@ def get_students_by_group(group_id: int, db: Session = Depends(get_db)):
         )
         .all()
     )
-
     return students
-
