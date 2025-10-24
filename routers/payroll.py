@@ -264,7 +264,8 @@ def list_payroll(
             "net": r.net,
             "status": r.status,
             "paid_at": r.paid_at,
-            "details": r.details
+            "details": r.details,
+            "userid": r.user_id
         }
         for r in rows
     ]
