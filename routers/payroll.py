@@ -7,19 +7,17 @@ from pydantic import BaseModel
 from .dependencies import get_db
 from .auth import get_current_user
 from .models import (
-    User, UserRole, Payment, Group,
+    User, UserRoleEnum as UserRole, Payment, Group,
     SalarySetting, Payroll, PayrollPayment
 )
 
 payroll_router = APIRouter(prefix="/payroll", tags=["Payroll"])
 
 
-# -------- Helper --------
+# ------------------ Helper ------------------
 def parse_month(month_str: str):
     try:
-        year, month = month_str.split("-")
-        year = int(year)
-        month = int(month)
+        year, month = map(int, month_str.split("-"))
         start = datetime(year, month, 1)
         end = datetime(year + (month // 12), (month % 12) + 1, 1)
         return start, end
@@ -27,7 +25,7 @@ def parse_month(month_str: str):
         raise HTTPException(status_code=400, detail="month must be YYYY-MM")
 
 
-# -------- Salary Settings --------
+# ------------------ Salary Settings ------------------
 class SalarySettingsIn(BaseModel):
     teacher_percent: float
     manager_active_percent: float
@@ -38,20 +36,11 @@ class SalarySettingsIn(BaseModel):
 def get_salary_settings(db: Session = Depends(get_db)):
     s = db.query(SalarySetting).order_by(SalarySetting.id.desc()).first()
     if not s:
-        s = SalarySetting(
-            teacher_percent=50,
-            manager_active_percent=10,
-            manager_new_percent=25
-        )
+        s = SalarySetting(teacher_percent=50, manager_active_percent=10, manager_new_percent=25)
         db.add(s)
         db.commit()
         db.refresh(s)
-    return {
-        "id": s.id,
-        "teacher_percent": s.teacher_percent,
-        "manager_active_percent": s.manager_active_percent,
-        "manager_new_percent": s.manager_new_percent
-    }
+    return s
 
 
 @payroll_router.put("/salary/settings")
@@ -60,7 +49,7 @@ def update_salary_settings(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != UserRole.admin:
+    if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can update settings")
 
     s = db.query(SalarySetting).order_by(SalarySetting.id.desc()).first()
@@ -68,14 +57,14 @@ def update_salary_settings(
         s = SalarySetting(**payload.dict())
         db.add(s)
     else:
-        for key, val in payload.dict().items():
-            setattr(s, key, val)
+        for k, v in payload.dict().items():
+            setattr(s, k, v)
     db.commit()
     db.refresh(s)
-    return {"message": "Settings updated ✅", "settings": payload.dict()}
+    return {"message": "Settings updated ✅", "settings": s}
 
 
-# -------- Per-Teacher Percent --------
+# ------------------ Per-Teacher Percent ------------------
 class TeacherPercentIn(BaseModel):
     teacher_percent: float
 
@@ -87,11 +76,10 @@ def update_teacher_percent(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Admin can assign a custom percent for an individual teacher"""
-    if current_user.role != UserRole.admin:
+    if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can update")
 
-    teacher = db.query(User).filter(User.id == teacher_id, User.role == UserRole.teacher).first()
+    teacher = db.query(User).filter(User.id == teacher_id, User.role == "teacher").first()
     if not teacher:
         raise HTTPException(status_code=404, detail="Teacher not found")
 
@@ -106,140 +94,110 @@ def update_teacher_percent(
     }
 
 
-@payroll_router.get("/teacher-percent/{teacher_id}")
-def get_teacher_percent(
-    teacher_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get teacher-specific percent"""
-    teacher = db.query(User).filter(User.id == teacher_id, User.role == UserRole.teacher).first()
-    if not teacher:
-        raise HTTPException(status_code=404, detail="Teacher not found")
-
-    return {
-        "teacher_id": teacher.id,
-        "teacher_name": teacher.full_name,
-        "teacher_percent": teacher.teacher_percent
-    }
-
-
-# -------- Calculate Payroll --------
+# ------------------ Payroll Calculation ------------------
 @payroll_router.post("/calculate")
 def calculate_payroll(
     month: str = Query(..., description="YYYY-MM"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != UserRole.admin:
+    if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can calculate payroll")
 
     start, end = parse_month(month)
-
     settings = db.query(SalarySetting).order_by(SalarySetting.id.desc()).first()
-    if not settings:
-        settings = SalarySetting(teacher_percent=50, manager_active_percent=10, manager_new_percent=25)
-        db.add(settings)
-        db.commit()
-        db.refresh(settings)
 
     db.query(Payroll).filter(Payroll.month == month).delete()
     db.commit()
 
-    # ------------------------
     # 🎓 TEACHERS
-    # ------------------------
-    teachers = db.query(User).filter(User.role == UserRole.teacher).all()
+    teachers = db.query(User).filter(User.role == "teacher").all()
     for t in teachers:
         group_ids = [g.id for g in db.query(Group).filter(Group.teacher_id == t.id).all()]
         if not group_ids:
             continue
 
-        total_group_payments = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
+        total_payments = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
             Payment.group_id.in_(group_ids),
             Payment.created_at >= start,
             Payment.created_at < end
         ).scalar() or 0.0
 
-        # Use teacher custom percent if available
         teacher_percent = t.teacher_percent if t.teacher_percent is not None else settings.teacher_percent
-        earned = total_group_payments * (teacher_percent / 100.0)
+        earned = total_payments * (teacher_percent / 100.0)
 
         db.add(Payroll(
             user_id=t.id,
             role="teacher",
             month=month,
-            earned=round(earned, 2),
+            earned=earned,
             deductions=0.0,
-            net=round(earned, 2),
+            net=earned,
             status="pending",
             details={
-                "total_group_payments": total_group_payments,
+                "teacher_name": t.full_name,
                 "teacher_percent_used": teacher_percent,
+                "total_group_payments": round(total_payments, 2),
                 "groups_count": len(group_ids)
             }
         ))
 
     db.commit()
 
-    # ------------------------
     # 🧑‍💼 MANAGERS
-    # ------------------------
-    managers = db.query(User).filter(User.role == UserRole.manager).all()
+    managers = db.query(User).filter(User.role == "manager").all()
     for m in managers:
-        month_payments_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
-            Payment.created_at >= start,
-            Payment.created_at < end
+        total_month_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
+            Payment.created_at >= start, Payment.created_at < end
         ).scalar() or 0.0
 
-        # Find new students (first payment within month)
-        subquery = db.query(
+        # new students = first payment in this month
+        sub = db.query(
             Payment.student_id,
             func.min(Payment.created_at).label("first_payment_date")
         ).group_by(Payment.student_id).subquery()
 
-        new_student_ids = [
-            r[0] for r in db.query(subquery.c.student_id)
-            .filter(subquery.c.first_payment_date >= start)
-            .filter(subquery.c.first_payment_date < end)
+        new_students = [
+            r[0] for r in db.query(sub.c.student_id)
+            .filter(sub.c.first_payment_date >= start)
+            .filter(sub.c.first_payment_date < end)
             .all()
         ]
 
-        new_students_first_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
-            Payment.student_id.in_(new_student_ids) if new_student_ids else False,
+        new_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
+            Payment.student_id.in_(new_students) if new_students else False,
             Payment.created_at >= start,
             Payment.created_at < end
         ).scalar() or 0.0
 
         earned = (
-            month_payments_sum * (settings.manager_active_percent / 100.0)
+            total_month_sum * (settings.manager_active_percent / 100)
         ) + (
-            new_students_first_sum * (settings.manager_new_percent / 100.0)
+            new_sum * (settings.manager_new_percent / 100)
         )
 
         db.add(Payroll(
             user_id=m.id,
             role="manager",
             month=month,
-            earned=round(earned, 2),
+            earned=earned,
             deductions=0.0,
-            net=round(earned, 2),
+            net=earned,
             status="pending",
             details={
-                "month_payments_sum": month_payments_sum,
-                "new_students_first_sum": new_students_first_sum,
-                "active_percent": settings.manager_active_percent,
-                "new_percent": settings.manager_new_percent,
-                "new_students_count": len(new_student_ids)
+                "total_payments": round(total_month_sum, 2),
+                "new_students_first_sum": round(new_sum, 2),
+                "new_students_count": len(new_students),
+                "manager_active_percent": settings.manager_active_percent,
+                "manager_new_percent": settings.manager_new_percent
             }
         ))
-
     db.commit()
 
     return {"message": f"Payroll calculated successfully for {month}"}
 
 
-# -------- List Payroll --------
+# ------------------ List Payroll ------------------
 @payroll_router.get("/")
 def list_payroll(
     month: str = None,
@@ -249,7 +207,7 @@ def list_payroll(
     q = db.query(Payroll)
     if month:
         q = q.filter(Payroll.month == month)
-    if current_user.role != UserRole.admin:
+    if current_user.role != "admin":
         q = q.filter(Payroll.user_id == current_user.id)
     rows = q.all()
 
@@ -264,14 +222,14 @@ def list_payroll(
             "net": r.net,
             "status": r.status,
             "paid_at": r.paid_at,
-            "details": r.details,
-            "userid": r.user_id
+            "details": r.details or {},
+            "user_id": r.user_id
         }
         for r in rows
     ]
 
 
-# -------- Mark as Paid --------
+# ------------------ Mark as Paid ------------------
 class PayIn(BaseModel):
     paid_amount: float
 
@@ -283,7 +241,7 @@ def pay_salary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != UserRole.admin:
+    if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can mark paid")
 
     row = db.query(Payroll).filter(Payroll.id == payroll_id).first()
@@ -295,13 +253,13 @@ def pay_salary(
     row.status = "paid"
     row.paid_at = datetime.utcnow()
 
-    payment = PayrollPayment(
+    db.add(PayrollPayment(
         payroll_id=row.id,
         paid_amount=payload.paid_amount,
         paid_by=current_user.id,
         paid_at=row.paid_at
-    )
-    db.add(payment)
+    ))
+
     db.commit()
     db.refresh(row)
 
