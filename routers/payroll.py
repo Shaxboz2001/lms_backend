@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from .dependencies import get_db
 from .auth import get_current_user
 from .models import (
-    User, UserRoleEnum as UserRole, Payment, Group,
+    User, UserRole, Payment, Group,
     SalarySetting, Payroll, PayrollPayment
 )
 
