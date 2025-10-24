@@ -2,13 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime
-from typing import List
 from pydantic import BaseModel
 
 from .dependencies import get_db
 from .auth import get_current_user
 from .models import (
-    User, UserRole, Payment, Attendance, Group,
+    User, UserRole, Payment, Group,
     SalarySetting, Payroll, PayrollPayment
 )
 
@@ -39,7 +38,11 @@ class SalarySettingsIn(BaseModel):
 def get_salary_settings(db: Session = Depends(get_db)):
     s = db.query(SalarySetting).order_by(SalarySetting.id.desc()).first()
     if not s:
-        s = SalarySetting(teacher_percent=50, manager_active_percent=10, manager_new_percent=25)
+        s = SalarySetting(
+            teacher_percent=50,
+            manager_active_percent=10,
+            manager_new_percent=25
+        )
         db.add(s)
         db.commit()
         db.refresh(s)
@@ -58,7 +61,8 @@ def update_salary_settings(
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role != UserRole.admin:
-        raise HTTPException(status_code=403, detail="Only admin can update")
+        raise HTTPException(status_code=403, detail="Only admin can update settings")
+
     s = db.query(SalarySetting).order_by(SalarySetting.id.desc()).first()
     if not s:
         s = SalarySetting(**payload.dict())
@@ -68,7 +72,56 @@ def update_salary_settings(
             setattr(s, key, val)
     db.commit()
     db.refresh(s)
-    return {"message": "updated", "settings": payload.dict()}
+    return {"message": "Settings updated ✅", "settings": payload.dict()}
+
+
+# -------- Per-Teacher Percent --------
+class TeacherPercentIn(BaseModel):
+    teacher_percent: float
+
+
+@payroll_router.put("/teacher-percent/{teacher_id}")
+def update_teacher_percent(
+    teacher_id: int,
+    payload: TeacherPercentIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Admin can assign a custom percent for an individual teacher"""
+    if current_user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="Only admin can update")
+
+    teacher = db.query(User).filter(User.id == teacher_id, User.role == UserRole.teacher).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    teacher.teacher_percent = payload.teacher_percent
+    db.commit()
+    db.refresh(teacher)
+
+    return {
+        "message": f"Teacher {teacher.full_name or teacher.username} percent updated",
+        "teacher_id": teacher.id,
+        "teacher_percent": teacher.teacher_percent
+    }
+
+
+@payroll_router.get("/teacher-percent/{teacher_id}")
+def get_teacher_percent(
+    teacher_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get teacher-specific percent"""
+    teacher = db.query(User).filter(User.id == teacher_id, User.role == UserRole.teacher).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    return {
+        "teacher_id": teacher.id,
+        "teacher_name": teacher.full_name,
+        "teacher_percent": teacher.teacher_percent
+    }
 
 
 # -------- Calculate Payroll --------
@@ -85,87 +138,61 @@ def calculate_payroll(
 
     settings = db.query(SalarySetting).order_by(SalarySetting.id.desc()).first()
     if not settings:
-        settings = SalarySetting()
+        settings = SalarySetting(teacher_percent=50, manager_active_percent=10, manager_new_percent=25)
         db.add(settings)
         db.commit()
         db.refresh(settings)
 
-    # Eski payrolllar o‘chiriladi
     db.query(Payroll).filter(Payroll.month == month).delete()
     db.commit()
 
     # ------------------------
-    # TEACHERS
+    # 🎓 TEACHERS
     # ------------------------
     teachers = db.query(User).filter(User.role == UserRole.teacher).all()
     for t in teachers:
         group_ids = [g.id for g in db.query(Group).filter(Group.teacher_id == t.id).all()]
+        if not group_ids:
+            continue
 
-        # to‘lov summasi
-        payments_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
-            Payment.group_id.in_(group_ids) if group_ids else False,
+        total_group_payments = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
+            Payment.group_id.in_(group_ids),
             Payment.created_at >= start,
             Payment.created_at < end
         ).scalar() or 0.0
 
-        # attendance
-        total_att = db.query(func.count(Attendance.id)).filter(
-            Attendance.group_id.in_(group_ids) if group_ids else False,
-            Attendance.date >= start.date(),
-            Attendance.date < end.date()
-        ).scalar() or 0
-
-        present_att = db.query(func.count(Attendance.id)).filter(
-            Attendance.group_id.in_(group_ids) if group_ids else False,
-            Attendance.status == "present",
-            Attendance.date >= start.date(),
-            Attendance.date < end.date()
-        ).scalar() or 0
-
-        attendance_rate = (present_att / total_att * 100) if total_att > 0 else 100.0
-
-        earned = payments_sum * (settings.teacher_percent / 100)
-        deductions = earned * (1 - attendance_rate / 100)
-        net = earned - deductions
+        # Use teacher custom percent if available
+        teacher_percent = t.teacher_percent if t.teacher_percent is not None else settings.teacher_percent
+        earned = total_group_payments * (teacher_percent / 100.0)
 
         db.add(Payroll(
             user_id=t.id,
             role="teacher",
             month=month,
             earned=round(earned, 2),
-            deductions=round(deductions, 2),
-            net=round(net, 2),
+            deductions=0.0,
+            net=round(earned, 2),
             status="pending",
             details={
-                "groups": len(group_ids),
-                "payments_sum": payments_sum,
-                "attendance_rate": attendance_rate
+                "total_group_payments": total_group_payments,
+                "teacher_percent_used": teacher_percent,
+                "groups_count": len(group_ids)
             }
         ))
+
     db.commit()
 
     # ------------------------
-    # MANAGERS
+    # 🧑‍💼 MANAGERS
     # ------------------------
     managers = db.query(User).filter(User.role == UserRole.manager).all()
     for m in managers:
-        # Aktiv talabalar
-        active_student_ids = [
-            s[0] for s in db.query(Attendance.student_id)
-            .filter(
-                Attendance.status == "present",
-                Attendance.date >= start.date(),
-                Attendance.date < end.date()
-            ).distinct().all()
-        ]
-
-        active_payments_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
-            Payment.student_id.in_(active_student_ids) if active_student_ids else False,
+        month_payments_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
             Payment.created_at >= start,
             Payment.created_at < end
         ).scalar() or 0.0
 
-        # Yangi o‘quvchilar — birinchi to‘lov aynan shu oyda bo‘lganlar
+        # Find new students (first payment within month)
         subquery = db.query(
             Payment.student_id,
             func.min(Payment.created_at).label("first_payment_date")
@@ -178,16 +205,16 @@ def calculate_payroll(
             .all()
         ]
 
-        new_students_first_payments_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
+        new_students_first_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
             Payment.student_id.in_(new_student_ids) if new_student_ids else False,
             Payment.created_at >= start,
             Payment.created_at < end
         ).scalar() or 0.0
 
         earned = (
-            active_payments_sum * (settings.manager_active_percent / 100.0)
+            month_payments_sum * (settings.manager_active_percent / 100.0)
         ) + (
-            new_students_first_payments_sum * (settings.manager_new_percent / 100.0)
+            new_students_first_sum * (settings.manager_new_percent / 100.0)
         )
 
         db.add(Payroll(
@@ -199,12 +226,14 @@ def calculate_payroll(
             net=round(earned, 2),
             status="pending",
             details={
-                "active_students": len(active_student_ids),
-                "new_students": len(new_student_ids),
-                "active_payments_sum": active_payments_sum,
-                "new_students_first_payments": new_students_first_payments_sum
+                "month_payments_sum": month_payments_sum,
+                "new_students_first_sum": new_students_first_sum,
+                "active_percent": settings.manager_active_percent,
+                "new_percent": settings.manager_new_percent,
+                "new_students_count": len(new_student_ids)
             }
         ))
+
     db.commit()
 
     return {"message": f"Payroll calculated successfully for {month}"}
@@ -212,13 +241,18 @@ def calculate_payroll(
 
 # -------- List Payroll --------
 @payroll_router.get("/")
-def list_payroll(month: str = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def list_payroll(
+    month: str = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     q = db.query(Payroll)
     if month:
         q = q.filter(Payroll.month == month)
     if current_user.role != UserRole.admin:
         q = q.filter(Payroll.user_id == current_user.id)
     rows = q.all()
+
     return [
         {
             "id": r.id,
@@ -259,6 +293,7 @@ def pay_salary(
 
     row.status = "paid"
     row.paid_at = datetime.utcnow()
+
     payment = PayrollPayment(
         payroll_id=row.id,
         paid_amount=payload.paid_amount,
@@ -269,4 +304,4 @@ def pay_salary(
     db.commit()
     db.refresh(row)
 
-    return {"message": "Salary marked as paid", "id": row.id, "paid_amount": payload.paid_amount}
+    return {"message": "Salary marked as paid 💰", "id": row.id, "paid_amount": payload.paid_amount}

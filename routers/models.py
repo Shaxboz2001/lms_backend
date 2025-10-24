@@ -66,6 +66,8 @@ class User(Base):
     status = Column(Enum(StudentStatus), default=StudentStatus.interested)
     teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     group_id = Column(Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
+    teacher_percent = Column(Float, nullable=True)  # custom percent for each teacher
+
 
     # 🔹 Relationships
     # Teacher bo‘lgan user -> group’lar
