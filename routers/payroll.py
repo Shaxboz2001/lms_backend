@@ -86,90 +86,147 @@ def list_teachers_and_managers(db: Session = Depends(get_db), current_user: User
 
 # -------- Calculate Payroll --------
 @payroll_router.post("/calculate")
-def calculate_payroll(month: str = Query(..., description="YYYY-MM"),
-                      db: Session = Depends(get_db),
-                      current_user: User = Depends(get_current_user)):
-    if current_user.role != UserRole.admin:
-        raise HTTPException(status_code=403, detail="Only admin")
+def calculate_payroll(month: str = Query(..., description="YYYY-MM"), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # admin only
+    if current_user.role not in [UserRole.admin]:
+        raise HTTPException(status_code=403, detail="Only admin can calculate payroll")
 
+    # parse month -> start, end (you already have parse_month)
     start, end = parse_month(month)
+
+    # get settings (or defaults)
     settings = db.query(SalarySetting).order_by(SalarySetting.id.desc()).first()
     if not settings:
-        settings = SalarySetting(teacher_percent=30, manager_active_percent=10, manager_new_percent=25)
-        db.add(settings); db.commit()
+        settings = SalarySetting()
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
 
-    # Clear existing payroll
-    db.query(Payroll).filter(Payroll.month == month).delete()
+    # remove previous payroll rows for this month (optional)
+    existing = db.query(Payroll).filter(Payroll.month == month).all()
+    for ex in existing:
+        db.delete(ex)
     db.commit()
 
-    # ---- Teachers ----
+    # ------------------------
+    # TEACHERS
+    # ------------------------
     teachers = db.query(User).filter(User.role == UserRole.teacher).all()
     for t in teachers:
-        groups = db.query(Group.id).filter(Group.teacher_id == t.id).all()
-        group_ids = [g[0] for g in groups] if groups else []
+        # groups taught by teacher
+        groups_q = db.query(Group.id).filter(Group.teacher_id == t.id).all()
+        group_ids = [g[0] for g in groups_q] if groups_q else []
 
-        payments_sum = 0.0
+        # sum payments in month for those groups
         if group_ids:
-            payments_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
+            payments_sum = db.query(
+                func.coalesce(func.sum(Payment.amount), 0.0)
+            ).filter(
                 Payment.group_id.in_(group_ids),
-                Payment.created_at >= start, Payment.created_at < end
+                Payment.created_at >= start,
+                Payment.created_at < end
             ).scalar() or 0.0
+        else:
+            payments_sum = 0.0
 
-        present = db.query(func.count(Attendance.id)).filter(
-            Attendance.group_id.in_(group_ids),
-            Attendance.present == True,
-            Attendance.created_at >= start, Attendance.created_at < end
-        ).scalar() or 0
-        total = db.query(func.count(Attendance.id)).filter(
-            Attendance.group_id.in_(group_ids),
-            Attendance.created_at >= start, Attendance.created_at < end
-        ).scalar() or 0
-        attendance_rate = (present / total * 100) if total > 0 else 100.0
+        # attendance: use Attendance.status == "present" and Attendance.date between start/end
+        if group_ids:
+            present = db.query(func.count(Attendance.id)).filter(
+                Attendance.group_id.in_(group_ids),
+                Attendance.status == "present",
+                Attendance.date >= start.date() if hasattr(start, "date") else start,
+                Attendance.date < end.date() if hasattr(end, "date") else end
+            ).scalar() or 0
 
-        earned = payments_sum * (settings.teacher_percent / 100)
-        deductions = earned * (1 - attendance_rate / 100)
+            total = db.query(func.count(Attendance.id)).filter(
+                Attendance.group_id.in_(group_ids),
+                Attendance.date >= start.date() if hasattr(start, "date") else start,
+                Attendance.date < end.date() if hasattr(end, "date") else end
+            ).scalar() or 0
+
+            attendance_rate = (present / total * 100.0) if total > 0 else 100.0
+        else:
+            attendance_rate = 100.0
+
+        earned = float(payments_sum) * (settings.teacher_percent / 100.0)
+        deductions = earned * (1.0 - (attendance_rate / 100.0))
         net = earned - deductions
 
         p = Payroll(
-            user_id=t.id, role="teacher", month=month,
-            earned=round(earned, 2), deductions=round(deductions, 2),
-            net=round(net, 2), status="pending",
-            details={"attendance": attendance_rate, "payments_sum": payments_sum}
+            user_id=t.id,
+            role="teacher",
+            month=month,
+            earned=round(earned, 2),
+            deductions=round(deductions, 2),
+            net=round(net, 2),
+            status="pending",
+            details={
+                "payments_sum": payments_sum,
+                "attendance_rate": attendance_rate,
+                "group_count": len(group_ids),
+                "attendance_field_used": "Attendance.status / Attendance.date"
+            }
         )
         db.add(p)
     db.commit()
 
-    # ---- Managers ----
+    # ------------------------
+    # MANAGERS
+    # ------------------------
     managers = db.query(User).filter(User.role == UserRole.manager).all()
     for m in managers:
-        active_students = db.query(Attendance.student_id).filter(
-            Attendance.present == True,
-            Attendance.created_at >= start, Attendance.created_at < end
+        # Active students: students with at least one attendance.status == "present" in the month
+        active_student_ids_q = db.query(Attendance.student_id).filter(
+            Attendance.status == "present",
+            Attendance.date >= start.date() if hasattr(start, "date") else start,
+            Attendance.date < end.date() if hasattr(end, "date") else end
         ).distinct().all()
-        active_ids = [r[0] for r in active_students]
+        active_student_ids = [r[0] for r in active_student_ids_q]
 
-        active_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
-            Payment.student_id.in_(active_ids),
-            Payment.created_at >= start, Payment.created_at < end
-        ).scalar() or 0.0
+        active_payments_sum = 0.0
+        if active_student_ids:
+            active_payments_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
+                Payment.student_id.in_(active_student_ids),
+                Payment.created_at >= start,
+                Payment.created_at < end
+            ).scalar() or 0.0
 
+        # New students created in this month: use User.created_at (ensure it exists)
         new_students = db.query(User).filter(
             User.role == UserRole.student,
-            User.created_at >= start, User.created_at < end
+            User.created_at >= start,
+            User.created_at < end
         ).all()
-        new_sum = 0.0
-        for ns in new_students:
-            first = db.query(Payment).filter(Payment.student_id == ns.id).order_by(Payment.created_at.asc()).first()
-            if first: new_sum += float(first.amount)
 
-        earned = (active_sum * (settings.manager_active_percent / 100)) + (new_sum * (settings.manager_new_percent / 100))
-        net = earned
+        new_student_first_payments_sum = 0.0
+        for ns in new_students:
+            first_payment = db.query(Payment).filter(
+                Payment.student_id == ns.id,
+                Payment.created_at >= start,
+                Payment.created_at < end
+            ).order_by(Payment.created_at.asc()).first()
+            if first_payment:
+                new_student_first_payments_sum += float(first_payment.amount)
+
+        earned = (float(active_payments_sum) * (settings.manager_active_percent / 100.0)) + \
+                 (float(new_student_first_payments_sum) * (settings.manager_new_percent / 100.0))
+        deductions = 0.0
+        net = earned - deductions
 
         p = Payroll(
-            user_id=m.id, role="manager", month=month,
-            earned=round(earned, 2), deductions=0, net=round(net, 2),
+            user_id=m.id,
+            role="manager",
+            month=month,
+            earned=round(earned, 2),
+            deductions=round(deductions, 2),
+            net=round(net, 2),
             status="pending",
-            details={"active_sum": active_sum, "new_sum": new_sum}
+            details={
+                "active_payments_sum": active_payments_sum,
+                "new_students_count": len(new_students),
+                "new_students_first_payments": new_student_first_payments_sum,
+                "attendance_field_used": "Attendance.status / Attendance.date"
+            }
         )
         db.add(p)
     db.commit()
