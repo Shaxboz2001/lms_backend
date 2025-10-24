@@ -14,16 +14,15 @@ from .models import (
 
 payroll_router = APIRouter(prefix="/payroll", tags=["Payroll"])
 
+
 # -------- Helper --------
 def parse_month(month_str: str):
     try:
         year, month = month_str.split("-")
-        year = int(year); month = int(month)
+        year = int(year)
+        month = int(month)
         start = datetime(year, month, 1)
-        if month == 12:
-            end = datetime(year + 1, 1, 1)
-        else:
-            end = datetime(year, month + 1, 1)
+        end = datetime(year + (month // 12), (month % 12) + 1, 1)
         return start, end
     except Exception:
         raise HTTPException(status_code=400, detail="month must be YYYY-MM")
@@ -35,18 +34,22 @@ class SalarySettingsIn(BaseModel):
     manager_active_percent: float
     manager_new_percent: float
 
+
 @payroll_router.get("/salary/settings")
 def get_salary_settings(db: Session = Depends(get_db)):
     s = db.query(SalarySetting).order_by(SalarySetting.id.desc()).first()
     if not s:
-        s = SalarySetting(teacher_percent=0, manager_active_percent=0, manager_new_percent=0)
-        db.add(s); db.commit(); db.refresh(s)
+        s = SalarySetting(teacher_percent=50, manager_active_percent=10, manager_new_percent=25)
+        db.add(s)
+        db.commit()
+        db.refresh(s)
     return {
         "id": s.id,
         "teacher_percent": s.teacher_percent,
         "manager_active_percent": s.manager_active_percent,
         "manager_new_percent": s.manager_new_percent
     }
+
 
 @payroll_router.put("/salary/settings")
 def update_salary_settings(
@@ -63,38 +66,23 @@ def update_salary_settings(
     else:
         for key, val in payload.dict().items():
             setattr(s, key, val)
-    db.commit(); db.refresh(s)
+    db.commit()
+    db.refresh(s)
     return {"message": "updated", "settings": payload.dict()}
-
-
-# -------- User List (teachers & managers) --------
-@payroll_router.get("/users")
-def list_teachers_and_managers(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role != UserRole.admin:
-        raise HTTPException(status_code=403, detail="Only admin")
-    users = db.query(User).filter(User.role.in_([UserRole.teacher, UserRole.manager])).all()
-    return [
-        {
-            "id": u.id,
-            "full_name": u.full_name,
-            "role": u.role.value,
-            "created_at": getattr(u, "created_at", None)
-        }
-        for u in users
-    ]
 
 
 # -------- Calculate Payroll --------
 @payroll_router.post("/calculate")
-def calculate_payroll(month: str = Query(..., description="YYYY-MM"), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # admin only
-    if current_user.role not in [UserRole.admin]:
+def calculate_payroll(
+    month: str = Query(..., description="YYYY-MM"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Only admin can calculate payroll")
 
-    # parse month -> start, end (you already have parse_month)
     start, end = parse_month(month)
 
-    # get settings (or defaults)
     settings = db.query(SalarySetting).order_by(SalarySetting.id.desc()).first()
     if not settings:
         settings = SalarySetting()
@@ -102,10 +90,8 @@ def calculate_payroll(month: str = Query(..., description="YYYY-MM"), db: Sessio
         db.commit()
         db.refresh(settings)
 
-    # remove previous payroll rows for this month (optional)
-    existing = db.query(Payroll).filter(Payroll.month == month).all()
-    for ex in existing:
-        db.delete(ex)
+    # Eski payrolllar o‘chiriladi
+    db.query(Payroll).filter(Payroll.month == month).delete()
     db.commit()
 
     # ------------------------
@@ -113,46 +99,36 @@ def calculate_payroll(month: str = Query(..., description="YYYY-MM"), db: Sessio
     # ------------------------
     teachers = db.query(User).filter(User.role == UserRole.teacher).all()
     for t in teachers:
-        # groups taught by teacher
-        groups_q = db.query(Group.id).filter(Group.teacher_id == t.id).all()
-        group_ids = [g[0] for g in groups_q] if groups_q else []
+        group_ids = [g.id for g in db.query(Group).filter(Group.teacher_id == t.id).all()]
 
-        # sum payments in month for those groups
-        if group_ids:
-            payments_sum = db.query(
-                func.coalesce(func.sum(Payment.amount), 0.0)
-            ).filter(
-                Payment.group_id.in_(group_ids),
-                Payment.created_at >= start,
-                Payment.created_at < end
-            ).scalar() or 0.0
-        else:
-            payments_sum = 0.0
+        # to‘lov summasi
+        payments_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
+            Payment.group_id.in_(group_ids) if group_ids else False,
+            Payment.created_at >= start,
+            Payment.created_at < end
+        ).scalar() or 0.0
 
-        # attendance: use Attendance.status == "present" and Attendance.date between start/end
-        if group_ids:
-            present = db.query(func.count(Attendance.id)).filter(
-                Attendance.group_id.in_(group_ids),
-                Attendance.status == "present",
-                Attendance.date >= start.date() if hasattr(start, "date") else start,
-                Attendance.date < end.date() if hasattr(end, "date") else end
-            ).scalar() or 0
+        # attendance
+        total_att = db.query(func.count(Attendance.id)).filter(
+            Attendance.group_id.in_(group_ids) if group_ids else False,
+            Attendance.date >= start.date(),
+            Attendance.date < end.date()
+        ).scalar() or 0
 
-            total = db.query(func.count(Attendance.id)).filter(
-                Attendance.group_id.in_(group_ids),
-                Attendance.date >= start.date() if hasattr(start, "date") else start,
-                Attendance.date < end.date() if hasattr(end, "date") else end
-            ).scalar() or 0
+        present_att = db.query(func.count(Attendance.id)).filter(
+            Attendance.group_id.in_(group_ids) if group_ids else False,
+            Attendance.status == "present",
+            Attendance.date >= start.date(),
+            Attendance.date < end.date()
+        ).scalar() or 0
 
-            attendance_rate = (present / total * 100.0) if total > 0 else 100.0
-        else:
-            attendance_rate = 100.0
+        attendance_rate = (present_att / total_att * 100) if total_att > 0 else 100.0
 
-        earned = float(payments_sum) * (settings.teacher_percent / 100.0)
-        deductions = earned * (1.0 - (attendance_rate / 100.0))
+        earned = payments_sum * (settings.teacher_percent / 100)
+        deductions = earned * (1 - attendance_rate / 100)
         net = earned - deductions
 
-        p = Payroll(
+        db.add(Payroll(
             user_id=t.id,
             role="teacher",
             month=month,
@@ -161,13 +137,11 @@ def calculate_payroll(month: str = Query(..., description="YYYY-MM"), db: Sessio
             net=round(net, 2),
             status="pending",
             details={
+                "groups": len(group_ids),
                 "payments_sum": payments_sum,
-                "attendance_rate": attendance_rate,
-                "group_count": len(group_ids),
-                "attendance_field_used": "Attendance.status / Attendance.date"
+                "attendance_rate": attendance_rate
             }
-        )
-        db.add(p)
+        ))
     db.commit()
 
     # ------------------------
@@ -175,63 +149,65 @@ def calculate_payroll(month: str = Query(..., description="YYYY-MM"), db: Sessio
     # ------------------------
     managers = db.query(User).filter(User.role == UserRole.manager).all()
     for m in managers:
-        # Active students: students with at least one attendance.status == "present" in the month
-        active_student_ids_q = db.query(Attendance.student_id).filter(
-            Attendance.status == "present",
-            Attendance.date >= start.date() if hasattr(start, "date") else start,
-            Attendance.date < end.date() if hasattr(end, "date") else end
-        ).distinct().all()
-        active_student_ids = [r[0] for r in active_student_ids_q]
+        # Aktiv talabalar
+        active_student_ids = [
+            s[0] for s in db.query(Attendance.student_id)
+            .filter(
+                Attendance.status == "present",
+                Attendance.date >= start.date(),
+                Attendance.date < end.date()
+            ).distinct().all()
+        ]
 
-        active_payments_sum = 0.0
-        if active_student_ids:
-            active_payments_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
-                Payment.student_id.in_(active_student_ids),
-                Payment.created_at >= start,
-                Payment.created_at < end
-            ).scalar() or 0.0
+        active_payments_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
+            Payment.student_id.in_(active_student_ids) if active_student_ids else False,
+            Payment.created_at >= start,
+            Payment.created_at < end
+        ).scalar() or 0.0
 
-        # New students created in this month: use User.created_at (ensure it exists)
-        new_students = db.query(User).filter(
-            User.role == UserRole.student,
-            User.created_at >= start,
-            User.created_at < end
-        ).all()
+        # Yangi o‘quvchilar — birinchi to‘lov aynan shu oyda bo‘lganlar
+        subquery = db.query(
+            Payment.student_id,
+            func.min(Payment.created_at).label("first_payment_date")
+        ).group_by(Payment.student_id).subquery()
 
-        new_student_first_payments_sum = 0.0
-        for ns in new_students:
-            first_payment = db.query(Payment).filter(
-                Payment.student_id == ns.id,
-                Payment.created_at >= start,
-                Payment.created_at < end
-            ).order_by(Payment.created_at.asc()).first()
-            if first_payment:
-                new_student_first_payments_sum += float(first_payment.amount)
+        new_student_ids = [
+            r[0] for r in db.query(subquery.c.student_id)
+            .filter(subquery.c.first_payment_date >= start)
+            .filter(subquery.c.first_payment_date < end)
+            .all()
+        ]
 
-        earned = (float(active_payments_sum) * (settings.manager_active_percent / 100.0)) + \
-                 (float(new_student_first_payments_sum) * (settings.manager_new_percent / 100.0))
-        deductions = 0.0
-        net = earned - deductions
+        new_students_first_payments_sum = db.query(func.coalesce(func.sum(Payment.amount), 0.0)).filter(
+            Payment.student_id.in_(new_student_ids) if new_student_ids else False,
+            Payment.created_at >= start,
+            Payment.created_at < end
+        ).scalar() or 0.0
 
-        p = Payroll(
+        earned = (
+            active_payments_sum * (settings.manager_active_percent / 100.0)
+        ) + (
+            new_students_first_payments_sum * (settings.manager_new_percent / 100.0)
+        )
+
+        db.add(Payroll(
             user_id=m.id,
             role="manager",
             month=month,
             earned=round(earned, 2),
-            deductions=round(deductions, 2),
-            net=round(net, 2),
+            deductions=0.0,
+            net=round(earned, 2),
             status="pending",
             details={
+                "active_students": len(active_student_ids),
+                "new_students": len(new_student_ids),
                 "active_payments_sum": active_payments_sum,
-                "new_students_count": len(new_students),
-                "new_students_first_payments": new_student_first_payments_sum,
-                "attendance_field_used": "Attendance.status / Attendance.date"
+                "new_students_first_payments": new_students_first_payments_sum
             }
-        )
-        db.add(p)
+        ))
     db.commit()
 
-    return {"message": "Payroll calculated", "month": month}
+    return {"message": f"Payroll calculated successfully for {month}"}
 
 
 # -------- List Payroll --------
@@ -264,8 +240,14 @@ def list_payroll(month: str = None, db: Session = Depends(get_db), current_user:
 class PayIn(BaseModel):
     paid_amount: float
 
+
 @payroll_router.post("/{payroll_id}/pay")
-def pay_salary(payroll_id: int, payload: PayIn, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def pay_salary(
+    payroll_id: int,
+    payload: PayIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     if current_user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Only admin can mark paid")
 
