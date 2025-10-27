@@ -133,14 +133,26 @@ def get_debts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    debts = db.query(Payment).filter(
-        Payment.status != "paid"
-    ).all()
+    debts = db.query(Payment).filter(Payment.status != "paid").all()
 
+    result = []
     for p in debts:
-        if p.due_date and p.due_date < date.today():
-            p.is_overdue = True
-        else:
-            p.is_overdue = False
+        # Overdue aniqlaymiz
+        p.is_overdue = bool(p.due_date and p.due_date < date.today())
 
-    return debts
+        result.append(PaymentResponse(
+            id=p.id,
+            amount=p.amount,
+            description=p.description,
+            created_at=p.created_at,
+            month=p.month,
+            status=p.status,
+            debt_amount=p.debt_amount,
+            due_date=p.due_date,
+            student=UserResponse.from_orm(p.student) if p.student else None,
+            teacher=UserResponse.from_orm(p.teacher) if p.teacher else None,
+            group=GroupResponse.from_orm(p.group) if p.group else None,
+        ))
+
+    return result
+
