@@ -9,10 +9,7 @@ from .dependencies import get_db, get_current_user
 from .schemas import PaymentResponse, UserResponse, GroupResponse
 from .models import User, UserRole, Payment, Group
 
-payments_router = APIRouter(
-    prefix="/payments",
-    tags=["Payments"]
-)
+payments_router = APIRouter(prefix="/payments", tags=["Payments"])
 
 
 # ---------------------------------
@@ -33,12 +30,7 @@ def get_payments(
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role == UserRole.student:
-        payments = db.query(Payment).filter(
-            or_(
-                Payment.student_id == current_user.id,
-                Payment.teacher_id == current_user.id
-            )
-        ).all()
+        payments = db.query(Payment).filter(Payment.student_id == current_user.id).all()
     elif current_user.role == UserRole.teacher:
         group_ids = [g.id for g in current_user.groups_as_teacher]
         payments = db.query(Payment).filter(
@@ -52,12 +44,8 @@ def get_payments(
     else:
         payments = []
 
-    # overdue aniqlaymiz
     for p in payments:
-        if p.due_date and p.due_date < date.today() and p.status != "paid":
-            p.is_overdue = True
-        else:
-            p.is_overdue = False
+        p.is_overdue = bool(p.due_date and p.due_date < date.today() and p.status != "paid")
 
     return payments
 
@@ -80,15 +68,7 @@ def create_payment(
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role == UserRole.student:
-        raise HTTPException(status_code=403, detail="Students cannot create payments")
-
-    if current_user.role == UserRole.teacher:
-        if teacher_id and teacher_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Teachers can only add their own salary")
-        if group_id:
-            group = db.query(Group).filter(Group.id == group_id).first()
-            if not group or current_user not in group.teachers:
-                raise HTTPException(status_code=403, detail="You can only add payments for your groups")
+        raise HTTPException(status_code=403, detail="Talabalar to‘lov qo‘sha olmaydi.")
 
     if not month:
         month = date.today().strftime("%Y-%m")
@@ -109,24 +89,11 @@ def create_payment(
     db.add(payment)
     db.commit()
     db.refresh(payment)
-
-    return PaymentResponse(
-        id=payment.id,
-        amount=payment.amount,
-        description=payment.description,
-        created_at=payment.created_at,
-        month=payment.month,
-        status=payment.status,
-        debt_amount=payment.debt_amount,
-        due_date=payment.due_date,
-        student=UserResponse.from_orm(payment.student) if payment.student else None,
-        teacher=UserResponse.from_orm(payment.teacher) if payment.teacher else None,
-        group=GroupResponse.from_orm(payment.group) if payment.group else None,
-    )
+    return payment
 
 
 # ------------------------------
-# GET Only Debtors
+# GET Debts
 # ------------------------------
 @payments_router.get("/debts", response_model=List[PaymentResponse])
 def get_debts(
@@ -134,25 +101,76 @@ def get_debts(
     current_user: User = Depends(get_current_user)
 ):
     debts = db.query(Payment).filter(Payment.status != "paid").all()
-
-    result = []
     for p in debts:
-        # Overdue aniqlaymiz
         p.is_overdue = bool(p.due_date and p.due_date < date.today())
+    return debts
 
-        result.append(PaymentResponse(
-            id=p.id,
-            amount=p.amount,
-            description=p.description,
-            created_at=p.created_at,
-            month=p.month,
-            status=p.status,
-            debt_amount=p.debt_amount,
-            due_date=p.due_date,
-            student=UserResponse.from_orm(p.student) if p.student else None,
-            teacher=UserResponse.from_orm(p.teacher) if p.teacher else None,
-            group=GroupResponse.from_orm(p.group) if p.group else None,
-        ))
 
-    return result
+# ------------------------------
+# GENERATE Monthly Debts
+# ------------------------------
+@payments_router.post("/generate-debts")
+def generate_monthly_debts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.manager, UserRole.admin]:
+        raise HTTPException(status_code=403, detail="Faqat manager yoki admin generatsiya qilishi mumkin.")
 
+    today = date.today()
+    current_month = today.strftime("%Y-%m")
+    groups = db.query(Group).all()
+    created_count = 0
+
+    for group in groups:
+        students = db.query(User).filter(User.group_id == group.id, User.role == UserRole.student).all()
+        for student in students:
+            existing = db.query(Payment).filter(
+                Payment.student_id == student.id,
+                Payment.group_id == group.id,
+                Payment.month == current_month
+            ).first()
+
+            if not existing:
+                payment = Payment(
+                    amount=0,
+                    description=f"{current_month} uchun avtomatik qarz",
+                    student_id=student.id,
+                    group_id=group.id,
+                    month=current_month,
+                    status="unpaid",
+                    debt_amount=group.fee or 0,
+                    due_date=date(today.year, today.month, 10),
+                    created_at=datetime.now()
+                )
+                db.add(payment)
+                created_count += 1
+
+    db.commit()
+    return {"message": f"{created_count} ta yangi qarz yozildi", "month": current_month}
+
+
+# ------------------------------
+# MARK Payment as Paid
+# ------------------------------
+@payments_router.put("/mark-paid/{payment_id}")
+def mark_payment_as_paid(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.manager, UserRole.admin]:
+        raise HTTPException(status_code=403, detail="Sizda ruxsat yo‘q.")
+
+    payment = db.query(Payment).filter(Payment.id == payment_id).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="To‘lov topilmadi.")
+
+    payment.status = "paid"
+    payment.amount = payment.debt_amount
+    payment.debt_amount = 0
+    payment.paid_at = datetime.now()
+
+    db.commit()
+    db.refresh(payment)
+    return {"message": "To‘lov to‘landi ✅", "payment": payment}
