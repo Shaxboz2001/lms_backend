@@ -167,3 +167,62 @@ def mark_payment_as_paid(
     db.commit()
     db.refresh(payment)
     return {"message": "To‘lov yangilandi ✅", "payment": payment}
+
+# ==============================
+# GET student's monthly payment history
+# ==============================
+@payments_router.get("/student/{student_id}/history")
+def get_student_payment_history(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 🔐 Ruxsat: faqat admin, manager yoki o‘zi
+    if current_user.role not in [UserRole.admin, UserRole.manager] and current_user.id != student_id:
+        raise HTTPException(status_code=403, detail="Ruxsat yo‘q!")
+
+    student = db.query(User).filter(User.id == student_id, User.role == UserRole.student).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="O‘quvchi topilmadi")
+
+    payments = (
+        db.query(Payment)
+        .filter(Payment.student_id == student_id)
+        .order_by(Payment.month.desc())
+        .all()
+    )
+
+    history = []
+    total_paid = 0
+    total_debt = 0
+
+    for p in payments:
+        # Kurs nomini olish
+        course_name = None
+        if p.group and p.group.course:
+            course_name = p.group.course.title
+
+        group_name = p.group.name if p.group else None
+
+        total_paid += p.amount or 0
+        total_debt += p.debt_amount or 0
+
+        history.append({
+            "month": p.month,
+            "course_name": course_name,
+            "group_name": group_name,
+            "amount": p.amount or 0,
+            "debt_amount": p.debt_amount or 0,
+            "status": p.status,
+            "due_date": p.due_date.isoformat() if p.due_date else None,
+            "is_overdue": bool(p.due_date and p.due_date < date.today() and p.status != "paid"),
+        })
+
+    return {
+        "student_id": student.id,
+        "student_name": student.full_name or student.username,
+        "total_paid": total_paid,
+        "total_debt": total_debt,
+        "history": history,
+    }
+
