@@ -12,18 +12,15 @@ from .models import User, UserRole, Payment, Group
 payments_router = APIRouter(prefix="/payments", tags=["Payments"])
 
 
-# -----------------------------
-# Enum for status
-# -----------------------------
 class PaymentStatus(str, Enum):
     paid = "paid"
     unpaid = "unpaid"
     partial = "partial"
 
 
-# -----------------------------
-# GET All Payments
-# -----------------------------
+# ==============================
+# GET all payments
+# ==============================
 @payments_router.get("/", response_model=List[PaymentResponse])
 def get_payments(
     db: Session = Depends(get_db),
@@ -44,16 +41,15 @@ def get_payments(
     else:
         payments = []
 
-    # overdue belgisi
     for p in payments:
         p.is_overdue = bool(p.due_date and p.due_date < date.today() and p.status != "paid")
 
     return payments
 
 
-# -----------------------------
-# CREATE Payment
-# -----------------------------
+# ==============================
+# CREATE new payment manually
+# ==============================
 @payments_router.post("/", response_model=PaymentResponse)
 def create_payment(
     amount: float = Body(..., gt=0),
@@ -69,7 +65,7 @@ def create_payment(
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role == UserRole.student:
-        raise HTTPException(status_code=403, detail="Talabalar to‘lov yarata olmaydi.")
+        raise HTTPException(status_code=403, detail="Talabalar to‘lov qo‘sha olmaydi.")
 
     if not month:
         month = date.today().strftime("%Y-%m")
@@ -93,23 +89,9 @@ def create_payment(
     return payment
 
 
-# -----------------------------
-# GET Debts (unpaid)
-# -----------------------------
-@payments_router.get("/debts", response_model=List[PaymentResponse])
-def get_debts(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    debts = db.query(Payment).filter(Payment.status != "paid").all()
-    for p in debts:
-        p.is_overdue = bool(p.due_date and p.due_date < date.today())
-    return debts
-
-
-# -----------------------------
-# GENERATE Monthly Debts
-# -----------------------------
+# ==============================
+# GENERATE unpaid debts automatically
+# ==============================
 @payments_router.post("/generate-debts")
 def generate_monthly_debts(
     db: Session = Depends(get_db),
@@ -124,21 +106,15 @@ def generate_monthly_debts(
     created_count = 0
 
     for group in groups:
-        # Guruhdagi o‘quvchilarni olish
         students = db.query(User).filter(User.group_id == group.id, User.role == UserRole.student).all()
-
-        # Guruh to‘lovi (guruhda yo‘q bo‘lsa, kursdan olamiz)
-        group_fee = group.course.price if group.course else 0
-
         for student in students:
-            # Shu o‘quvchiga shu oyda qarz yozilganmi
             existing = db.query(Payment).filter(
                 Payment.student_id == student.id,
                 Payment.group_id == group.id,
                 Payment.month == current_month
             ).first()
-
             if not existing:
+                course_price = group.course.price if group.course else 0
                 payment = Payment(
                     amount=0,
                     description=f"{current_month} uchun avtomatik qarz",
@@ -146,7 +122,7 @@ def generate_monthly_debts(
                     group_id=group.id,
                     month=current_month,
                     status="unpaid",
-                    debt_amount=group_fee,
+                    debt_amount=course_price,
                     due_date=date(today.year, today.month, 10),
                     created_at=datetime.now()
                 )
@@ -157,12 +133,13 @@ def generate_monthly_debts(
     return {"message": f"{created_count} ta yangi qarz yozildi", "month": current_month}
 
 
-# -----------------------------
-# MARK Payment as Paid
-# -----------------------------
+# ==============================
+# MARK as paid (with amount)
+# ==============================
 @payments_router.put("/mark-paid/{payment_id}")
 def mark_payment_as_paid(
     payment_id: int,
+    amount: float = Body(..., gt=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -173,11 +150,20 @@ def mark_payment_as_paid(
     if not payment:
         raise HTTPException(status_code=404, detail="To‘lov topilmadi.")
 
-    payment.status = "paid"
-    payment.amount = payment.debt_amount
-    payment.debt_amount = 0
+    course_price = payment.group.course.price if payment.group and payment.group.course else 0
+
+    payment.amount += amount
+    remaining = course_price - payment.amount
+
+    if remaining <= 0:
+        payment.status = "paid"
+        payment.debt_amount = 0
+    else:
+        payment.status = "partial"
+        payment.debt_amount = remaining
+
     payment.paid_at = datetime.now()
 
     db.commit()
     db.refresh(payment)
-    return {"message": "To‘lov to‘landi ✅", "payment": payment}
+    return {"message": "To‘lov yangilandi ✅", "payment": payment}
