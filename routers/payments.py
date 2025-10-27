@@ -12,18 +12,18 @@ from .models import User, UserRole, Payment, Group
 payments_router = APIRouter(prefix="/payments", tags=["Payments"])
 
 
-# ---------------------------------
-# Enum for Payment Status
-# ---------------------------------
+# -----------------------------
+# Enum for status
+# -----------------------------
 class PaymentStatus(str, Enum):
     paid = "paid"
     unpaid = "unpaid"
     partial = "partial"
 
 
-# ------------------------------
-# GET Payments
-# ------------------------------
+# -----------------------------
+# GET All Payments
+# -----------------------------
 @payments_router.get("/", response_model=List[PaymentResponse])
 def get_payments(
     db: Session = Depends(get_db),
@@ -44,15 +44,16 @@ def get_payments(
     else:
         payments = []
 
+    # overdue belgisi
     for p in payments:
         p.is_overdue = bool(p.due_date and p.due_date < date.today() and p.status != "paid")
 
     return payments
 
 
-# ------------------------------
+# -----------------------------
 # CREATE Payment
-# ------------------------------
+# -----------------------------
 @payments_router.post("/", response_model=PaymentResponse)
 def create_payment(
     amount: float = Body(..., gt=0),
@@ -68,7 +69,7 @@ def create_payment(
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role == UserRole.student:
-        raise HTTPException(status_code=403, detail="Talabalar to‘lov qo‘sha olmaydi.")
+        raise HTTPException(status_code=403, detail="Talabalar to‘lov yarata olmaydi.")
 
     if not month:
         month = date.today().strftime("%Y-%m")
@@ -92,9 +93,9 @@ def create_payment(
     return payment
 
 
-# ------------------------------
-# GET Debts
-# ------------------------------
+# -----------------------------
+# GET Debts (unpaid)
+# -----------------------------
 @payments_router.get("/debts", response_model=List[PaymentResponse])
 def get_debts(
     db: Session = Depends(get_db),
@@ -106,9 +107,9 @@ def get_debts(
     return debts
 
 
-# ------------------------------
+# -----------------------------
 # GENERATE Monthly Debts
-# ------------------------------
+# -----------------------------
 @payments_router.post("/generate-debts")
 def generate_monthly_debts(
     db: Session = Depends(get_db),
@@ -123,8 +124,14 @@ def generate_monthly_debts(
     created_count = 0
 
     for group in groups:
+        # Guruhdagi o‘quvchilarni olish
         students = db.query(User).filter(User.group_id == group.id, User.role == UserRole.student).all()
+
+        # Guruh to‘lovi (guruhda yo‘q bo‘lsa, kursdan olamiz)
+        group_fee = group.fee or (group.course.price if group.course else 0)
+
         for student in students:
+            # Shu o‘quvchiga shu oyda qarz yozilganmi
             existing = db.query(Payment).filter(
                 Payment.student_id == student.id,
                 Payment.group_id == group.id,
@@ -139,7 +146,7 @@ def generate_monthly_debts(
                     group_id=group.id,
                     month=current_month,
                     status="unpaid",
-                    debt_amount=group.fee or 0,
+                    debt_amount=group_fee,
                     due_date=date(today.year, today.month, 10),
                     created_at=datetime.now()
                 )
@@ -150,9 +157,9 @@ def generate_monthly_debts(
     return {"message": f"{created_count} ta yangi qarz yozildi", "month": current_month}
 
 
-# ------------------------------
+# -----------------------------
 # MARK Payment as Paid
-# ------------------------------
+# -----------------------------
 @payments_router.put("/mark-paid/{payment_id}")
 def mark_payment_as_paid(
     payment_id: int,
