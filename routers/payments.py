@@ -128,7 +128,7 @@ def generate_monthly_debts(
         students = db.query(User).filter(User.group_id == group.id, User.role == UserRole.student).all()
 
         # Guruh to‘lovi (guruhda yo‘q bo‘lsa, kursdan olamiz)
-        group_fee = group.fee or (group.course.price if group.course else 0)
+        group_fee = group.course.price if group.course else 0
 
         for student in students:
             # Shu o‘quvchiga shu oyda qarz yozilganmi
