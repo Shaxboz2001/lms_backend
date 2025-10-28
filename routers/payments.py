@@ -265,10 +265,10 @@ def calculate_monthly_payments(
         ).all()
 
         for student in students:
-            # PostgreSQL query with reason
+            # PostgreSQL query without "reason"
             attendance_records = db.execute(
                 text("""
-                    SELECT date, status, reason
+                    SELECT date, status
                     FROM attendance
                     WHERE student_id = :sid
                       AND group_id = :gid
@@ -278,10 +278,9 @@ def calculate_monthly_payments(
             ).fetchall()
 
             attended_lessons = sum(1 for a in attendance_records if a.status == "present")
-            absent_sababli = sum(1 for a in attendance_records if a.status == "absent" and a.reason == "sababli")
-            absent_sababsiz = sum(1 for a in attendance_records if a.status == "absent" and a.reason == "sababsiz")
+            absent_lessons = sum(1 for a in attendance_records if a.status == "absent")
 
-            total_lessons = attended_lessons + absent_sababli + absent_sababsiz
+            total_lessons = attended_lessons + absent_lessons
             per_lesson_price = course_price / lessons_count if lessons_count else 0
 
             # Previous month balance
@@ -300,7 +299,6 @@ def calculate_monthly_payments(
 
             # Monthly debt calculation
             monthly_due = round(per_lesson_price * lessons_count, 2) if total_lessons > 0 else 0
-
             final_debt = monthly_due + previous_balance if previous_balance > 0 else max(0, monthly_due + previous_balance) if previous_balance < 0 else monthly_due
 
             # Payment status
