@@ -259,11 +259,14 @@ def calculate_monthly_payments(
 
     for group in groups:
         course_price = group.course.price if group.course else 0
-        lessons_count = 12  # Har oyda 12 ta dars
+        lessons_count = 12  # Har oyda 12 ta dars deb hisoblanadi
         if course_price == 0:
             continue
 
-        students = db.query(User).filter(User.group_id == group.id, User.role == UserRole.student).all()
+        students = db.query(User).filter(
+            User.group_id == group.id,
+            User.role == UserRole.student
+        ).all()
 
         for student in students:
             # === 1. Attendance yozuvlari ===
@@ -283,7 +286,7 @@ def calculate_monthly_payments(
             absent_sababsiz = sum(1 for a in attendance_records if a.status == "absent" and a.reason == "sababsiz")
 
             total_lessons = attended_lessons + absent_sababli + absent_sababsiz
-            per_lesson_price = course_price / lessons_count
+            per_lesson_price = course_price / lessons_count if lessons_count else 0
 
             # === 2. O‘tgan oy balansini hisoblash ===
             previous_payment = db.query(Payment).filter(
@@ -295,7 +298,7 @@ def calculate_monthly_payments(
             if previous_payment:
                 previous_balance = (
                     previous_payment.debt_amount
-                    if previous_payment.status != "paid"
+                    if previous_payment.status in ["unpaid", "partial"]
                     else -previous_payment.amount
                 )
 
@@ -303,8 +306,7 @@ def calculate_monthly_payments(
             if total_lessons == 0:
                 monthly_due = 0
             else:
-                # Sababsiz kelmagan darslar ham hisoblanadi
-                effective_lessons = attended_lessons + absent_sababsiz
+                # Sababsiz kelmagan darslar ham qarzga kiritiladi
                 monthly_due = round(per_lesson_price * lessons_count, 2)
 
             # === 4. Umumiy qarzni hisoblash (balans bilan)
@@ -315,7 +317,15 @@ def calculate_monthly_payments(
             else:
                 final_debt = monthly_due
 
-            # === 5. To‘lov holatini yangilash yoki yaratish ===
+            # === 5. To‘lov holatini hisoblash ===
+            if final_debt <= 0:
+                payment_status = "paid"
+            elif 0 < final_debt < course_price:
+                payment_status = "partial"
+            else:
+                payment_status = "unpaid"
+
+            # === 6. Mavjud yozuvni yangilash yoki yangisini yaratish ===
             existing = db.query(Payment).filter(
                 Payment.student_id == student.id,
                 Payment.group_id == group.id,
@@ -324,7 +334,7 @@ def calculate_monthly_payments(
 
             if existing:
                 existing.debt_amount = final_debt
-                existing.status = "paid" if final_debt <= 0 else "partial"
+                existing.status = payment_status
                 updated += 1
             else:
                 payment = Payment(
@@ -333,7 +343,7 @@ def calculate_monthly_payments(
                     student_id=student.id,
                     group_id=group.id,
                     month=current_month,
-                    status="unpaid" if final_debt > 0 else "paid",
+                    status=payment_status,
                     debt_amount=final_debt,
                     due_date=date(today.year, today.month, 10),
                     created_at=datetime.now()
@@ -342,12 +352,14 @@ def calculate_monthly_payments(
                 created += 1
 
     db.commit()
+
     return {
         "message": f"✅ Hisoblash yakunlandi: {created} yangi, {updated} yangilandi.",
         "month": current_month
     }
 
 
+# =================== ATTENDANCE SABAB O‘ZGARTIRISH ===================
 @payments_router.post("/attendance/reason")
 def update_attendance_reason(
     student_id: int = Body(...),
