@@ -259,7 +259,7 @@ def calculate_monthly_payments(
 
     for group in groups:
         course_price = group.course.price if group.course else 0
-        lessons_count = 12  # Agar kursda lessons_count bo‘lsa, undan foydalaning
+        lessons_count = 12  # Har oyda 12 ta dars
         if course_price == 0:
             continue
 
@@ -268,13 +268,13 @@ def calculate_monthly_payments(
         for student in students:
             # === 1. Attendance yozuvlari ===
             attendance_records = db.execute(
-                """
-                SELECT date, status, reason
-                FROM attendance
-                WHERE student_id = :sid
-                  AND group_id = :gid
-                  AND strftime('%Y-%m', date) = :month
-                """,
+                text("""
+                    SELECT date, status, reason
+                    FROM attendance
+                    WHERE student_id = :sid
+                      AND group_id = :gid
+                      AND strftime('%Y-%m', date) = :month
+                """),
                 {"sid": student.id, "gid": group.id, "month": current_month}
             ).fetchall()
 
@@ -293,24 +293,29 @@ def calculate_monthly_payments(
 
             previous_balance = 0
             if previous_payment:
-                # agar qarzdor bo‘lsa +, agar ortiqcha to‘lagan bo‘lsa -
-                previous_balance = previous_payment.debt_amount * (1 if previous_payment.status != "paid" else -1)
+                previous_balance = (
+                    previous_payment.debt_amount
+                    if previous_payment.status != "paid"
+                    else -previous_payment.amount
+                )
 
             # === 3. Bu oy uchun qarzni hisoblash ===
-            monthly_due = course_price
-            if attended_lessons > 0 or absent_sababsiz > 0:
-                # Sababsiz qoldirilgan darslar ham qarzga kiritiladi
-                effective_lessons = attended_lessons + absent_sababsiz
-                monthly_due = per_lesson_price * lessons_count  # to‘liq oy uchun
+            if total_lessons == 0:
+                monthly_due = 0
             else:
-                monthly_due = 0  # dars bo‘lmasa qarz yo‘q
+                # Sababsiz kelmagan darslar ham hisoblanadi
+                effective_lessons = attended_lessons + absent_sababsiz
+                monthly_due = round(per_lesson_price * lessons_count, 2)
 
-            # === 4. Eski balansni hisobga olish
-            final_debt = monthly_due + (previous_balance if previous_balance > 0 else 0)
-            if previous_balance < 0:  # oldingi balans ortiqcha bo‘lsa
+            # === 4. Umumiy qarzni hisoblash (balans bilan)
+            if previous_balance > 0:  # o‘tgan oydan qarz
+                final_debt = monthly_due + previous_balance
+            elif previous_balance < 0:  # ortiqcha to‘lov
                 final_debt = max(0, monthly_due + previous_balance)
+            else:
+                final_debt = monthly_due
 
-            # === 5. Mavjud to‘lovni tekshirish ===
+            # === 5. To‘lov holatini yangilash yoki yaratish ===
             existing = db.query(Payment).filter(
                 Payment.student_id == student.id,
                 Payment.group_id == group.id,
@@ -356,10 +361,10 @@ def update_attendance_reason(
         raise HTTPException(status_code=403, detail="Faqat manager o‘zgartira oladi.")
 
     att = db.execute(
-        """
-        SELECT * FROM attendance
-        WHERE student_id = :sid AND group_id = :gid AND date = :dt
-        """,
+        text("""
+            SELECT * FROM attendance
+            WHERE student_id = :sid AND group_id = :gid AND date = :dt
+        """),
         {"sid": student_id, "gid": group_id, "dt": date_value}
     ).fetchone()
 
@@ -367,11 +372,11 @@ def update_attendance_reason(
         raise HTTPException(status_code=404, detail="Dars topilmadi.")
 
     db.execute(
-        """
-        UPDATE attendance
-        SET reason = :reason
-        WHERE student_id = :sid AND group_id = :gid AND date = :dt
-        """,
+        text("""
+            UPDATE attendance
+            SET reason = :reason
+            WHERE student_id = :sid AND group_id = :gid AND date = :dt
+        """),
         {"reason": reason, "sid": student_id, "gid": group_id, "dt": date_value}
     )
     db.commit()
