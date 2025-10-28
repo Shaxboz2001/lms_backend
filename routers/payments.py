@@ -55,32 +55,45 @@ def create_payment(
     amount: float = Body(..., gt=0),
     description: Optional[str] = Body(None),
     student_id: Optional[int] = Body(None),
-    teacher_id: Optional[int] = Body(None),
     group_id: Optional[int] = Body(None),
     month: Optional[str] = Body(None),
-    status: Optional[PaymentStatus] = Body(PaymentStatus.paid),
-    debt_amount: Optional[float] = Body(0),
-    due_date: Optional[date] = Body(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role == UserRole.student:
         raise HTTPException(status_code=403, detail="Talabalar to‘lov qo‘sha olmaydi.")
 
+    if not student_id:
+        raise HTTPException(status_code=400, detail="O‘quvchi ID kiritilmadi.")
+
+    student = db.query(User).filter(User.id == student_id, User.role == UserRole.student).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="O‘quvchi topilmadi.")
+
+    # 🧩 Agar group_id kiritilmagan bo‘lsa — studentning birinchi guruhini olamiz
+    if not group_id:
+        group = db.query(Group).filter(Group.id == student.group_id).first()
+        if not group:
+            raise HTTPException(status_code=400, detail="O‘quvchiga biriktirilgan guruh topilmadi.")
+        group_id = group.id
+    else:
+        group = db.query(Group).filter(Group.id == group_id).first()
+
     if not month:
         month = date.today().strftime("%Y-%m")
 
+    # 🔹 Kurs narxini avtomatik olish
+    course_price = group.course.price if group and group.course else 0
+
     payment = Payment(
         amount=amount,
-        description=description,
+        description=description or group.course.title if group and group.course else "To‘lov",
         student_id=student_id,
-        teacher_id=teacher_id,
         group_id=group_id,
         month=month,
-        status=status.value,
-        debt_amount=debt_amount,
-        due_date=due_date,
-        created_at=datetime.now()
+        status="paid" if amount >= course_price else "partial",
+        debt_amount=max(course_price - amount, 0),
+        created_at=datetime.now(),
     )
 
     db.add(payment)
