@@ -239,3 +239,143 @@ def get_student_payment_history(
         "history": history,
     }
 
+@payments_router.post("/calculate-monthly")
+def calculate_monthly_payments(
+    month: Optional[str] = Body(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Har bir guruh uchun oylik to‘lovni attendance va balans asosida hisoblaydi.
+    Sababli/sababsiz darslar manager tomonidan belgilanadi.
+    """
+    if current_user.role not in [UserRole.manager, UserRole.admin]:
+        raise HTTPException(status_code=403, detail="Faqat manager yoki admin hisoblay oladi.")
+
+    today = date.today()
+    current_month = month or today.strftime("%Y-%m")
+    groups = db.query(Group).all()
+    created, updated = 0, 0
+
+    for group in groups:
+        course_price = group.course.price if group.course else 0
+        lessons_count = 12  # Agar kursda lessons_count bo‘lsa, undan foydalaning
+        if course_price == 0:
+            continue
+
+        students = db.query(User).filter(User.group_id == group.id, User.role == UserRole.student).all()
+
+        for student in students:
+            # === 1. Attendance yozuvlari ===
+            attendance_records = db.execute(
+                """
+                SELECT date, status, reason
+                FROM attendance
+                WHERE student_id = :sid
+                  AND group_id = :gid
+                  AND strftime('%Y-%m', date) = :month
+                """,
+                {"sid": student.id, "gid": group.id, "month": current_month}
+            ).fetchall()
+
+            attended_lessons = sum(1 for a in attendance_records if a.status == "present")
+            absent_sababli = sum(1 for a in attendance_records if a.status == "absent" and a.reason == "sababli")
+            absent_sababsiz = sum(1 for a in attendance_records if a.status == "absent" and a.reason == "sababsiz")
+
+            total_lessons = attended_lessons + absent_sababli + absent_sababsiz
+            per_lesson_price = course_price / lessons_count
+
+            # === 2. O‘tgan oy balansini hisoblash ===
+            previous_payment = db.query(Payment).filter(
+                Payment.student_id == student.id,
+                Payment.group_id == group.id
+            ).order_by(Payment.month.desc()).first()
+
+            previous_balance = 0
+            if previous_payment:
+                # agar qarzdor bo‘lsa +, agar ortiqcha to‘lagan bo‘lsa -
+                previous_balance = previous_payment.debt_amount * (1 if previous_payment.status != "paid" else -1)
+
+            # === 3. Bu oy uchun qarzni hisoblash ===
+            monthly_due = course_price
+            if attended_lessons > 0 or absent_sababsiz > 0:
+                # Sababsiz qoldirilgan darslar ham qarzga kiritiladi
+                effective_lessons = attended_lessons + absent_sababsiz
+                monthly_due = per_lesson_price * lessons_count  # to‘liq oy uchun
+            else:
+                monthly_due = 0  # dars bo‘lmasa qarz yo‘q
+
+            # === 4. Eski balansni hisobga olish
+            final_debt = monthly_due + (previous_balance if previous_balance > 0 else 0)
+            if previous_balance < 0:  # oldingi balans ortiqcha bo‘lsa
+                final_debt = max(0, monthly_due + previous_balance)
+
+            # === 5. Mavjud to‘lovni tekshirish ===
+            existing = db.query(Payment).filter(
+                Payment.student_id == student.id,
+                Payment.group_id == group.id,
+                Payment.month == current_month
+            ).first()
+
+            if existing:
+                existing.debt_amount = final_debt
+                existing.status = "paid" if final_debt <= 0 else "partial"
+                updated += 1
+            else:
+                payment = Payment(
+                    amount=0,
+                    description=f"{current_month} uchun hisoblangan qarz",
+                    student_id=student.id,
+                    group_id=group.id,
+                    month=current_month,
+                    status="unpaid" if final_debt > 0 else "paid",
+                    debt_amount=final_debt,
+                    due_date=date(today.year, today.month, 10),
+                    created_at=datetime.now()
+                )
+                db.add(payment)
+                created += 1
+
+    db.commit()
+    return {
+        "message": f"✅ Hisoblash yakunlandi: {created} yangi, {updated} yangilandi.",
+        "month": current_month
+    }
+
+
+@payments_router.post("/attendance/reason")
+def update_attendance_reason(
+    student_id: int = Body(...),
+    date_value: str = Body(...),
+    group_id: int = Body(...),
+    reason: str = Body(...),  # "sababli" yoki "sababsiz"
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.manager, UserRole.admin]:
+        raise HTTPException(status_code=403, detail="Faqat manager o‘zgartira oladi.")
+
+    att = db.execute(
+        """
+        SELECT * FROM attendance
+        WHERE student_id = :sid AND group_id = :gid AND date = :dt
+        """,
+        {"sid": student_id, "gid": group_id, "dt": date_value}
+    ).fetchone()
+
+    if not att:
+        raise HTTPException(status_code=404, detail="Dars topilmadi.")
+
+    db.execute(
+        """
+        UPDATE attendance
+        SET reason = :reason
+        WHERE student_id = :sid AND group_id = :gid AND date = :dt
+        """,
+        {"reason": reason, "sid": student_id, "gid": group_id, "dt": date_value}
+    )
+    db.commit()
+
+    return {"message": f"Dars uchun sabab yangilandi: {reason}"}
+
+
