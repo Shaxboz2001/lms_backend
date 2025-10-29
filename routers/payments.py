@@ -7,11 +7,24 @@ from typing import List, Optional
 from datetime import date, datetime
 
 from .dependencies import get_db, get_current_user
-from .models import User, UserRole, Payment, Group, PaymentStatus
+from .models import User, UserRole, Payment, Group, PaymentStatus, Attendance
 from .schemas import PaymentResponse  # Agar mavjud bo‘lsa
 
 payments_router = APIRouter(prefix="/payments", tags=["Payments"])
+class AttendanceReasonUpdate(BaseModel):
+    attendance_id: int
+    reason: str
 
+
+class CalculateMonthPayload(BaseModel):
+    month: Optional[str] = None
+
+class PaymentCreate(BaseModel):
+    student_id: int
+    group_id: int
+    amount: float
+    description: Optional[str] = None
+    month: Optional[str] = None
 
 # =========================
 # 🔹 GET ALL PAYMENTS (by role)
@@ -182,65 +195,57 @@ def mark_payment_as_paid(
 # =========================
 # 🔹 GET STUDENT PAYMENT HISTORY
 # =========================
-@payments_router.get("/student/{student_id}/history")
-def get_student_payment_history(
+@payments_router.get("/student/{student_id}")
+def get_student_payments(
     student_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """O‘quvchi to‘lov tarixini qaytaradi (admin/manager yoki o‘sha o‘quvchi o‘zi)."""
-    if current_user.role not in [UserRole.admin, UserRole.manager] and current_user.id != student_id:
-        raise HTTPException(status_code=403, detail="Ruxsat yo‘q.")
+    if current_user.role not in [UserRole.manager, UserRole.admin, UserRole.student]:
+        raise HTTPException(status_code=403, detail="Ruxsat yo‘q")
 
-    student = db.query(User).filter(User.id == student_id, User.role == UserRole.student).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="O‘quvchi topilmadi.")
-
-    payments = db.query(Payment).filter(Payment.student_id == student_id).order_by(Payment.month.desc()).all()
-
-    history = []
-    total_paid, total_debt = 0, 0
-    for p in payments:
-        course_name = p.group.course.title if getattr(p.group, "course", None) else None
-        group_name = p.group.name if p.group else None
-        total_paid += p.amount or 0
-        total_debt += p.debt_amount or 0
-        history.append({
-            "month": p.month,
-            "course_name": course_name,
-            "group_name": group_name,
-            "amount": p.amount or 0,
-            "debt_amount": p.debt_amount or 0,
-            "status": p.status,
-            "due_date": p.due_date.isoformat() if p.due_date else None,
-            "is_overdue": bool(p.due_date and p.due_date < date.today() and p.status != "paid"),
-        })
-
-    return {
-        "student_id": student.id,
-        "student_name": student.full_name or student.username,
-        "total_paid": total_paid,
-        "total_debt": total_debt,
-        "history": history
-    }
+    payments = (
+        db.query(Payment)
+        .filter(Payment.student_id == student_id)
+        .order_by(Payment.created_at.desc())
+        .all()
+    )
+    return payments
 
 
 # =========================
-# 🔹 CALCULATE MONTHLY PAYMENTS from ATTENDANCE
+# 2️⃣ Attendance sababini manager kiritadi
 # =========================
-class CalculateMonthPayload(BaseModel):
-    month: Optional[str] = None
+@payments_router.post("/attendance/update-reason")
+def update_attendance_reason(
+    data: AttendanceReasonUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in [UserRole.manager, UserRole.admin]:
+        raise HTTPException(status_code=403, detail="Faqat manager o‘zgartira oladi")
+
+    att = db.query(Attendance).filter(Attendance.id == data.attendance_id).first()
+    if not att:
+        raise HTTPException(status_code=404, detail="Yo‘qlama topilmadi")
+
+    att.reason = data.reason
+    db.commit()
+    db.refresh(att)
+    return {"message": "✅ Sabab muvaffaqiyatli yangilandi", "attendance": att}
 
 
+# =========================
+# 3️⃣ Oylik hisoblash (PostgreSQL versiya)
+# =========================
 @payments_router.post("/calculate-monthly")
 def calculate_monthly_payments(
     payload: CalculateMonthPayload = Body(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """PostgreSQL uchun optimallashtirilgan versiya."""
     if current_user.role not in [UserRole.manager, UserRole.admin]:
-        raise HTTPException(status_code=403, detail="Faqat manager yoki admin hisoblay oladi.")
+        raise HTTPException(status_code=403, detail="Faqat manager yoki admin hisoblay oladi")
 
     today = date.today()
     current_month = payload.month or today.strftime("%Y-%m")
@@ -256,7 +261,6 @@ def calculate_monthly_payments(
         students = db.query(User).filter(User.group_id == group.id, User.role == UserRole.student).all()
 
         for student in students:
-            # ✅ PostgreSQL uchun TO_CHAR
             attendance_records = db.execute(
                 text("""
                     SELECT status, reason
@@ -265,7 +269,7 @@ def calculate_monthly_payments(
                       AND group_id = :gid
                       AND TO_CHAR(date, 'YYYY-MM') = :month
                 """),
-                {"sid": student.id, "gid": group.id, "month": current_month}
+                {"sid": student.id, "gid": group.id, "month": current_month},
             ).fetchall()
 
             attended_lessons = sum(1 for a in attendance_records if a.status == "present")
