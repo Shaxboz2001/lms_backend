@@ -236,9 +236,9 @@ class CalculateMonthPayload(BaseModel):
 def calculate_monthly_payments(
     payload: CalculateMonthPayload = Body(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """Attendance asosida har oy uchun to‘lovlarni hisoblaydi."""
+    """PostgreSQL uchun optimallashtirilgan versiya."""
     if current_user.role not in [UserRole.manager, UserRole.admin]:
         raise HTTPException(status_code=403, detail="Faqat manager yoki admin hisoblay oladi.")
 
@@ -249,39 +249,51 @@ def calculate_monthly_payments(
 
     for group in groups:
         course_price = group.course.price if getattr(group, "course", None) else 0
-        lessons_count = 12  # kursdagi umumiy darslar soni
-        if not course_price:
+        lessons_count = 12
+        if not course_price or lessons_count <= 0:
             continue
 
         students = db.query(User).filter(User.group_id == group.id, User.role == UserRole.student).all()
 
         for student in students:
+            # ✅ PostgreSQL uchun TO_CHAR
             attendance_records = db.execute(
                 text("""
                     SELECT status, reason
                     FROM attendance
                     WHERE student_id = :sid
                       AND group_id = :gid
-                      AND strftime('%Y-%m', date) = :month
+                      AND TO_CHAR(date, 'YYYY-MM') = :month
                 """),
                 {"sid": student.id, "gid": group.id, "month": current_month}
             ).fetchall()
 
-            attended = sum(1 for a in attendance_records if a.status == "present")
-            absent_sababsiz = sum(1 for a in attendance_records if a.status == "absent_sababsiz")
-            absent_sababli = sum(1 for a in attendance_records if a.status == "absent_sababli")
+            attended_lessons = sum(1 for a in attendance_records if a.status == "present")
+            absent_sababli = sum(1 for a in attendance_records if a.status == "absent" and a.reason == "sababli")
+            absent_sababsiz = sum(1 for a in attendance_records if a.status == "absent" and a.reason == "sababsiz")
 
-            per_lesson = course_price / lessons_count
-            effective_lessons = attended + absent_sababsiz
-            monthly_due = round(per_lesson * lessons_count, 2)
+            per_lesson_price = course_price / lessons_count
+            effective_lessons = attended_lessons + absent_sababsiz
+            monthly_due = round(per_lesson_price * lessons_count, 2)
 
-            prev_payment = db.query(Payment).filter(
+            previous_payment = db.query(Payment).filter(
                 Payment.student_id == student.id,
                 Payment.group_id == group.id
             ).order_by(Payment.month.desc()).first()
 
-            prev_balance = float(prev_payment.debt_amount) if prev_payment else 0
-            final_debt = monthly_due + prev_balance
+            previous_balance = 0.0
+            if previous_payment:
+                if previous_payment.status in [PaymentStatus.unpaid, PaymentStatus.partial]:
+                    previous_balance = float(previous_payment.debt_amount or 0.0)
+                elif previous_payment.status == PaymentStatus.paid:
+                    previous_balance = -float(previous_payment.amount or 0.0) if (previous_payment.amount or 0) > 0 else 0.0
+
+            if previous_balance > 0:
+                final_debt = monthly_due + previous_balance
+            elif previous_balance < 0:
+                final_debt = max(0, monthly_due + previous_balance)
+            else:
+                final_debt = monthly_due
 
             existing = db.query(Payment).filter(
                 Payment.student_id == student.id,
@@ -289,25 +301,23 @@ def calculate_monthly_payments(
                 Payment.month == current_month
             ).first()
 
-            status = (
-                PaymentStatus.paid if final_debt <= 0
-                else PaymentStatus.partial if final_debt < course_price
-                else PaymentStatus.unpaid
-            )
-
             if existing:
-                existing.debt_amount = final_debt
-                existing.status = status
+                existing.debt_amount = float(final_debt)
+                existing.status = (
+                    PaymentStatus.paid if final_debt <= 0
+                    else PaymentStatus.partial if final_debt < course_price
+                    else PaymentStatus.unpaid
+                )
                 updated += 1
             else:
                 db.add(Payment(
-                    amount=0,
+                    amount=0.0,
                     description=f"{current_month} uchun hisoblangan qarz",
                     student_id=student.id,
                     group_id=group.id,
                     month=current_month,
-                    status=status,
-                    debt_amount=final_debt,
+                    status=PaymentStatus.unpaid if final_debt > 0 else PaymentStatus.paid,
+                    debt_amount=float(final_debt),
                     due_date=date(today.year, today.month, 10),
                     created_at=datetime.now()
                 ))
