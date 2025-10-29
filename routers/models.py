@@ -67,6 +67,7 @@ class User(Base):
     teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     group_id = Column(Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
     teacher_percent = Column(Float, nullable=True)  # custom percent for each teacher
+    balance = Column(Float, default=0.0)
 
 
     # 🔹 Relationships
