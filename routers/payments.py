@@ -147,7 +147,7 @@ def generate_monthly_debts(
 
 
 # ==============================
-# MARK as paid (with amount)
+# MARK PAYMENT AS PAID va BALANSNI YANGILASH
 # ==============================
 @payments_router.put("/mark-paid/{payment_id}")
 def mark_payment_as_paid(
@@ -163,23 +163,40 @@ def mark_payment_as_paid(
     if not payment:
         raise HTTPException(status_code=404, detail="To‘lov topilmadi.")
 
+    student = db.query(User).filter(User.id == payment.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="O‘quvchi topilmadi.")
+
+    # Kurs narxi
     course_price = payment.group.course.price if payment.group and payment.group.course else 0
 
-    payment.amount += amount
-    remaining = course_price - payment.amount
+    # Oldingi balans
+    balance = student.balance or 0
 
-    if remaining <= 0:
+    # Qisman to‘lovni balans bilan jamlash
+    total_available = balance + amount
+
+    # Qarzni kamaytirish
+    remaining_debt = payment.debt_amount - total_available
+    if remaining_debt <= 0:
         payment.status = "paid"
         payment.debt_amount = 0
+        # Agar ortiqcha pul bo‘lsa, balansga yoziladi
+        student.balance = abs(remaining_debt)
     else:
         payment.status = "partial"
-        payment.debt_amount = remaining
+        payment.debt_amount = remaining_debt
+        student.balance = 0
 
+    # To‘langan summa
+    payment.amount += amount
     payment.paid_at = datetime.now()
 
     db.commit()
     db.refresh(payment)
-    return {"message": "To‘lov yangilandi ✅", "payment": payment}
+    db.refresh(student)
+
+    return {"message": "To‘lov yangilandi ✅", "payment": payment, "balance": student.balance}
 
 # ==============================
 # GET student's monthly payment history
@@ -239,6 +256,9 @@ def get_student_payment_history(
         "history": history,
     }
 
+# ==============================
+# CALCULATE MONTHLY PAYMENTS avtomatik, balans bilan
+# ==============================
 @payments_router.post("/calculate-monthly")
 def calculate_monthly_payments(
     month: Optional[str] = Body(None),
@@ -265,7 +285,7 @@ def calculate_monthly_payments(
         ).all()
 
         for student in students:
-            # PostgreSQL query without "reason"
+            # Attendance yozuvlari
             attendance_records = db.execute(
                 text("""
                     SELECT date, status
@@ -279,37 +299,36 @@ def calculate_monthly_payments(
 
             attended_lessons = sum(1 for a in attendance_records if a.status == "present")
             absent_lessons = sum(1 for a in attendance_records if a.status == "absent")
-
             total_lessons = attended_lessons + absent_lessons
             per_lesson_price = course_price / lessons_count if lessons_count else 0
 
-            # Previous month balance
-            previous_payment = db.query(Payment).filter(
-                Payment.student_id == student.id,
-                Payment.group_id == group.id
-            ).order_by(Payment.month.desc()).first()
-
-            previous_balance = 0
-            if previous_payment:
-                previous_balance = (
-                    previous_payment.debt_amount
-                    if previous_payment.status in ["unpaid", "partial"]
-                    else -previous_payment.amount
-                )
-
-            # Monthly debt calculation
             monthly_due = round(per_lesson_price * lessons_count, 2) if total_lessons > 0 else 0
-            final_debt = monthly_due + previous_balance if previous_balance > 0 else max(0, monthly_due + previous_balance) if previous_balance < 0 else monthly_due
+
+            # Oldingi to‘lovlar va balans
+            previous_payments = db.query(Payment).filter(
+                Payment.student_id == student.id,
+                Payment.group_id == group.id,
+                Payment.month <= current_month
+            ).all()
+            total_paid_before = sum(p.amount or 0 for p in previous_payments)
+            balance = student.balance or 0
+
+            # Qarzni balans bilan kamaytirish
+            total_available = total_paid_before + balance
+            final_debt = max(monthly_due - total_available, 0)
 
             # Payment status
             if final_debt <= 0:
                 payment_status = "paid"
+                student.balance = total_available - monthly_due  # ortiqcha pul
             elif 0 < final_debt < course_price:
                 payment_status = "partial"
+                student.balance = 0
             else:
                 payment_status = "unpaid"
+                student.balance = 0
 
-            # Update or create payment
+            # Existing payment tekshirish
             existing = db.query(Payment).filter(
                 Payment.student_id == student.id,
                 Payment.group_id == group.id,
@@ -335,12 +354,15 @@ def calculate_monthly_payments(
                 db.add(payment)
                 created += 1
 
+            db.add(student)  # balansni yangilash
+
     db.commit()
 
     return {
         "message": f"✅ Hisoblash yakunlandi: {created} yangi, {updated} yangilandi.",
         "month": current_month
     }
+
 # =================== ATTENDANCE SABAB O‘ZGARTIRISH ===================
 @payments_router.post("/attendance/reason")
 def update_attendance_reason(
