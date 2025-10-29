@@ -1,12 +1,13 @@
 # routers/payments.py
 from fastapi import APIRouter, Depends, HTTPException, Body
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, func
 from typing import List, Optional
 from datetime import date, datetime
 
 from .dependencies import get_db, get_current_user
-from .models import User, UserRole, Payment, Group  # sizning mavjud modellaringiz
+from .models import User, UserRole, Payment, Group, PaymentStatus  # sizning mavjud modellaringiz
 from .schemas import PaymentResponse  # agar bor bo'lsa
 
 payments_router = APIRouter(prefix="/payments", tags=["Payments"])
@@ -194,62 +195,90 @@ def get_student_payment_history(student_id: int, db: Session = Depends(get_db), 
         "history": history,
     }
 
-
+class CalculateMonthPayload(BaseModel):
+    month: Optional[str] = None
 # ---------------------------
 # CALCULATE monthly payments from attendance + balance
 # ---------------------------
 @payments_router.post("/calculate-monthly")
-def calculate_monthly_payments(month: Optional[str] = Body(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def calculate_monthly_payments(
+    payload: CalculateMonthPayload = Body(...),   # <-- endi JSON: { "month": "2025-10" } qabul qiladi
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     """
-    Attendance jadvali asosida har oy uchun qarzlarni hisoblaydi:
-    - Sababsiz kelinmagan darslar ham qarzga olinadi
-    - Oldingi balans (debt_amount) hisobra olinadi (agar oldindan ortiqcha pul bo'lsa - salbiy)
-    - Manager / admin tomonidan chaqiriladi yoki cron orqali
+    Har bir guruh uchun oylik to‘lovni attendance va balans asosida hisoblaydi.
+    Sababli/sababsiz darslar manager tomonidan belgilanadi.
     """
     if current_user.role not in [UserRole.manager, UserRole.admin]:
         raise HTTPException(status_code=403, detail="Faqat manager yoki admin hisoblay oladi.")
+
     today = date.today()
-    current_month = month or today.strftime("%Y-%m")
+    current_month = payload.month or today.strftime("%Y-%m")
     groups = db.query(Group).all()
     created, updated = 0, 0
 
     for group in groups:
-        course_price = group.course.price if group and getattr(group, "course", None) else 0
-        lessons_count = getattr(group, "lessons_count", 12) or 12
-        if course_price == 0:
+        # course va price mavjudligini tekshirish
+        course_price = group.course.price if getattr(group, "course", None) else 0
+        lessons_count = 12  # agar kurs modelida alohida `lessons_count` bo'lsa, undan foydalaning
+        if not course_price or lessons_count <= 0:
             continue
+
         students = db.query(User).filter(User.group_id == group.id, User.role == UserRole.student).all()
+
         for student in students:
+            # === 1) Attendance yozuvlari (raw SQL orqali) ===
+            # SQLda strftime ishlatsa, bu SQLite uchun to'g'ri. Agar siz boshqa DB (Postgres) ishlatsangiz,
+            # date funktsiyasini moslashtirish kerak bo'ladi (EXTRACT/TO_CHAR).
             attendance_records = db.execute(
-                text("""
+                text(
+                    """
                     SELECT date, status, reason
                     FROM attendance
                     WHERE student_id = :sid
                       AND group_id = :gid
                       AND strftime('%Y-%m', date) = :month
-                """),
+                    """
+                ),
                 {"sid": student.id, "gid": group.id, "month": current_month}
             ).fetchall()
-            attended = sum(1 for a in attendance_records if a.status == "present")
-            absent_sababli = sum(1 for a in attendance_records if a.status == "absent" and a.reason == "sababli")
-            absent_sababsiz = sum(1 for a in attendance_records if a.status == "absent" and a.reason == "sababsiz")
-            total_lessons = attended + absent_sababli + absent_sababsiz
-            per_lesson_price = course_price / lessons_count if lessons_count else 0
 
-            # previous balance (qarz yoki ortiqcha to'lov)
-            previous_payment = db.query(Payment).filter(Payment.student_id == student.id, Payment.group_id == group.id).order_by(Payment.month.desc()).first()
-            previous_balance = 0
+            # attendance_records qatorlari RowProxy bo'ladi -> a['status'] yoki a.status ishlaydi
+            attended_lessons = sum(1 for a in attendance_records if (a['status'] if 'status' in a.keys() else a.status) == "present")
+            absent_sababli = sum(1 for a in attendance_records if (a.get('status') if hasattr(a, 'get') else (a['status'] if 'status' in a.keys() else a.status)) == "absent" and (a.get('reason') if hasattr(a, 'get') else (a['reason'] if 'reason' in a.keys() else a.reason)) == "sababli")
+            absent_sababsiz = sum(1 for a in attendance_records if (a.get('status') if hasattr(a, 'get') else (a['status'] if 'status' in a.keys() else a.status)) == "absent" and (a.get('reason') if hasattr(a, 'get') else (a['reason'] if 'reason' in a.keys() else a.reason)) == "sababsiz")
+
+            total_lessons = attended_lessons + absent_sababli + absent_sababsiz
+            per_lesson_price = course_price / lessons_count
+
+            # === 2) O‘tgan oy balansini olish ===
+            previous_payment = db.query(Payment).filter(
+                Payment.student_id == student.id,
+                Payment.group_id == group.id
+            ).order_by(Payment.month.desc()).first()
+
+            previous_balance = 0.0
             if previous_payment:
-                previous_balance = previous_payment.debt_amount if previous_payment.status in ["unpaid", "partial"] else - (previous_payment.amount or 0)
+                # previous_payment.debt_amount — qolgan qarz (agar >0)
+                # previous_payment.amount — to'lov jami
+                # status ga qarab balans aniqlanadi (oldingi kodga mos)
+                if previous_payment.status == PaymentStatus.unpaid or previous_payment.status == PaymentStatus.partial:
+                    previous_balance = float(previous_payment.debt_amount or 0.0)
+                elif previous_payment.status == PaymentStatus.paid:
+                    # agar ortiqcha to'lov bo'lsa (negativ balans) — agar siz negative debit saqlayotgan bo'lsangiz
+                    previous_balance = -float(previous_payment.amount or 0.0) if (previous_payment.amount or 0) > 0 else 0.0
 
-            # calculate monthly_due: if there are lessons, charge full month; if none, 0
+            # === 3) Bu oy uchun qarzni hisoblash ===
             if total_lessons == 0:
-                monthly_due = 0
+                monthly_due = 0.0
             else:
-                # charge per lesson or full course depending on your policy; here we keep full month
+                # sizning talabga ko'ra: sababsiz qoldirilgan darslar ham qarzga kiritiladi
+                effective_lessons = attended_lessons + absent_sababsiz
+                # modelizda kurs uchun oy davomida to'liq narx ishlatiladi:
                 monthly_due = round(per_lesson_price * lessons_count, 2)
 
-            # final debt includes previous positive debt; if previous negative -> reduce
+            # === 4) Umumiy qarzni hisoblash (oldingi balans bilan) ===
             if previous_balance > 0:
                 final_debt = monthly_due + previous_balance
             elif previous_balance < 0:
@@ -257,35 +286,38 @@ def calculate_monthly_payments(month: Optional[str] = Body(None), db: Session = 
             else:
                 final_debt = monthly_due
 
-            # decide status
-            if final_debt <= 0:
-                status = "paid"
-            elif 0 < final_debt < course_price:
-                status = "partial"
-            else:
-                status = "unpaid"
+            # === 5) To‘lov yozuvi yangilash yoki yaratish ===
+            existing = db.query(Payment).filter(
+                Payment.student_id == student.id,
+                Payment.group_id == group.id,
+                Payment.month == current_month
+            ).first()
 
-            existing = db.query(Payment).filter(Payment.student_id == student.id, Payment.group_id == group.id, Payment.month == current_month).first()
             if existing:
-                existing.debt_amount = final_debt
-                existing.status = status
+                existing.debt_amount = float(final_debt)
+                existing.status = PaymentStatus.paid if final_debt <= 0 else PaymentStatus.partial if final_debt < course_price else PaymentStatus.unpaid
                 updated += 1
             else:
-                payment = Payment(
-                    amount=0,
+                new_payment = Payment(
+                    amount=0.0,
                     description=f"{current_month} uchun hisoblangan qarz",
                     student_id=student.id,
                     group_id=group.id,
                     month=current_month,
-                    status="unpaid" if final_debt > 0 else "paid",
-                    debt_amount=final_debt,
+                    status=PaymentStatus.unpaid if final_debt > 0 else PaymentStatus.paid,
+                    debt_amount=float(final_debt),
                     due_date=date(today.year, today.month, 10),
                     created_at=datetime.now()
                 )
-                db.add(payment)
+                db.add(new_payment)
                 created += 1
+
     db.commit()
-    return {"message": f"✅ Hisoblash yakunlandi: {created} yangi, {updated} yangilandi.", "month": current_month}
+    return {
+        "message": f"✅ Hisoblash yakunlandi: {created} yangi, {updated} yangilandi.",
+        "month": current_month
+    }
+
 
 
 # ---------------------------
