@@ -184,6 +184,8 @@ class Attendance(Base):
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
     date = Column(DateTime, default=datetime.utcnow)
     status = Column(String, default="present")
+    reason = Column(String, nullable=True, default=None)  # ✅ sababsiz / sababli
+
 
     student = relationship("User", foreign_keys=[student_id], back_populates="attendances_as_student")
     teacher = relationship("User", foreign_keys=[teacher_id], back_populates="attendances_as_teacher")

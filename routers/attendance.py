@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
-
 from datetime import datetime, date
 from .models import User, UserRole, Group, Attendance
 from .dependencies import get_db, get_current_user
@@ -12,13 +11,14 @@ attend_router = APIRouter(
     tags=["Attendance"]
 )
 
+
 # ------------------------------
 # POST: Bitta kun uchun yo‘qlama qo‘shish
 # ------------------------------
 @attend_router.post("/", response_model=List[AttendanceResponse])
 def create_attendance(
     group_id: int = Body(...),
-    records: List[AttendanceCreate] = Body(...),
+    records: List[dict] = Body(...),
     date_: Optional[date] = Body(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -30,12 +30,8 @@ def create_attendance(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    if current_user.role == UserRole.teacher and current_user != group.teacher:
-        raise HTTPException(status_code=403, detail="You can only add attendance for your groups")
-
     attendance_date = date_ or datetime.utcnow().date()
 
-    # Shu kunga oldin yozilgan attendance mavjudligini tekshirish
     existing = db.query(Attendance).filter(
         Attendance.group_id == group_id,
         Attendance.date == attendance_date
@@ -45,16 +41,17 @@ def create_attendance(
 
     attendance_list = []
     for record in records:
-        student = db.query(User).filter(User.id == record.student_id).first()
+        student = db.query(User).filter(User.id == record["student_id"]).first()
         if not student:
             continue
 
         attendance_entry = Attendance(
-            student_id=record.student_id,
+            student_id=record["student_id"],
             teacher_id=current_user.id,
             group_id=group_id,
             date=attendance_date,
-            status="present" if record.is_present else "absent"
+            status="present" if record["is_present"] else "absent",
+            reason=record.get("reason", None)
         )
         db.add(attendance_entry)
         attendance_list.append(attendance_entry)
@@ -67,7 +64,37 @@ def create_attendance(
 
 
 # ------------------------------
-# GET: Oy bo‘yicha hisobot (faqat saqlangan kunlar)
+# PATCH: Sababni yangilash
+# ------------------------------
+@attend_router.patch("/reason")
+def update_reason(
+    student_id: int = Body(...),
+    group_id: int = Body(...),
+    date_value: str = Body(...),
+    reason: str = Body(...),  # "sababli" | "sababsiz"
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.manager, UserRole.admin]:
+        raise HTTPException(status_code=403, detail="Only manager or admin can update reasons")
+
+    attendance = db.query(Attendance).filter(
+        Attendance.student_id == student_id,
+        Attendance.group_id == group_id,
+        Attendance.date == date_value
+    ).first()
+
+    if not attendance:
+        raise HTTPException(status_code=404, detail="Attendance record not found")
+
+    attendance.reason = reason
+    db.commit()
+    db.refresh(attendance)
+    return {"message": f"Reason updated to {reason}"}
+
+
+# ------------------------------
+# GET: Oy bo‘yicha hisobot
 # ------------------------------
 @attend_router.get("/report/{group_id}")
 def get_group_report(
@@ -80,21 +107,15 @@ def get_group_report(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    if current_user.role == UserRole.teacher and current_user != group.teacher:
-        raise HTTPException(status_code=403, detail="Not allowed to view this group's attendance")
-
     today = datetime.utcnow()
     month = month or today.month
     year = today.year
 
-    # Oy boshidan hozirgi kungacha yoki tanlangan oy oxirigacha
     first_day = date(year, month, 1)
     last_day = today if month == today.month else date(year, month, 28)
 
-    # O‘quvchilar
     students = group.students
 
-    # Ushbu oy uchun attendance
     attendances = db.query(Attendance).filter(
         Attendance.group_id == group_id,
         Attendance.date >= first_day,
@@ -104,7 +125,6 @@ def get_group_report(
     if not attendances:
         return {"day_list": [], "rows": [], "message": "Bu oyda dars mavjud emas"}
 
-    # Faol attendance saqlangan kunlar ro‘yxati
     day_list = sorted(list({a.date for a in attendances}))
 
     rows = []
@@ -112,7 +132,15 @@ def get_group_report(
         row = {"fullname": s.full_name}
         for d in day_list:
             att = next((a for a in attendances if a.student_id == s.id and a.date == d), None)
-            row[d.strftime("%d.%m.%Y")] = "Bor" if att and att.status=="present" else "Yo'q"
+            if att:
+                if att.status == "present":
+                    row[d.strftime("%d.%m.%Y")] = "✅"
+                elif att.reason == "sababli":
+                    row[d.strftime("%d.%m.%Y")] = "🟡"
+                else:
+                    row[d.strftime("%d.%m.%Y")] = "❌"
+            else:
+                row[d.strftime("%d.%m.%Y")] = "-"
         rows.append(row)
 
     return {
