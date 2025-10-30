@@ -167,31 +167,28 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Group not found")
 
     try:
-        # IMPORT kerak bo'lsa ichida
-        from .models import Attendance, Payment
+        # import these Table objects and models from models.py
+        from .models import Attendance, Payment, group_students, group_teachers
 
-        # 1) Association table: group_teachers (agar bor bo'lsa) - o'chirish
-        #    (Bu nomni sizning loyihangizdagi nomga moslang)
-        if "group_teachers" in db.bind.table_names():
-            db.execute(
-                # SQLAlchemy Core delete on association table
-                # group_teachers must be imported/available in this module scope
-                # If you have a table object `group_teachers`, use that.
-                group_teachers.delete().where(group_teachers.c.group_id == group_id)
-            )
+        # 1) Association table: group_teachers — o'chirish
+        #    (agar jadval mavjud bo'lsa, bu ham ishlaydi)
+        db.execute(
+            group_teachers.delete().where(group_teachers.c.group_id == group_id)
+        )
 
         # 2) group_students association (many-to-many) - o'chirish
-        if "group_students" in db.bind.table_names():
-            db.execute(group_students.delete().where(group_students.c.group_id == group_id))
+        db.execute(
+            group_students.delete().where(group_students.c.group_id == group_id)
+        )
 
         # 3) Attendance yozuvlarini o'chirish (guruhga tegishli)
         db.query(Attendance).filter(Attendance.group_id == group_id).delete(synchronize_session=False)
 
-        # 4) Payment yozuvlarini o'chirish (agar kerak bo'lsa)
+        # 4) Payment yozuvlarini o'chirish (guruhga tegishli)
         db.query(Payment).filter(Payment.group_id == group_id).delete(synchronize_session=False)
 
-        # 5) Agar User jadvalidagi group_id NOT NULL bo'lsa - uni NULL qilish kerak.
-        #    (Agar column NOT NULL bo'lsa, bu qadam raiser; lekin avval group_students va attendances o'chirilgan bo'lsa OK)
+        # 5) Foydalanuvchilarning group_id ustunini NULL ga o'zgartirish
+        #    (agar column mavjud bo'lsa)
         if "group_id" in User.__table__.c:
             db.execute(
                 User.__table__.update()
@@ -206,7 +203,8 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
 
     except Exception as e:
         db.rollback()
-        # Ko'proq ma'lumot uchun raw exceptionni qaytaramiz (faqat developmentda)
+        # Agar developmentda bo'lsa, batafsil xatolik ko'rsatish foydali.
+        # Productionda esa umumiy xabar qaytarish yaxshiroq.
         raise HTTPException(status_code=400, detail=f"Could not delete group: {str(e)}")
 
 
