@@ -4,7 +4,7 @@ from typing import List
 from passlib.context import CryptContext
 from .dependencies import get_db, get_current_user
 from .schemas import UserResponse, UserCreate, UserBase
-from .models import User, UserRole, StudentStatus, Course, StudentCourse
+from .models import User, UserRole, StudentStatus, Course, StudentCourse, StudentAnswer
 
 students_router = APIRouter(
     prefix="/students",
@@ -160,9 +160,14 @@ def delete_student(
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    # StudentCourse dan ham o‘chiramiz
-    db.query(StudentCourse).filter(StudentCourse.student_id == student.id).delete()
+    # 1️⃣ StudentAnswer dan o‘chiramiz
+    db.query(StudentAnswer).filter(StudentAnswer.student_id == student.id).delete(synchronize_session=False)
 
+    # 2️⃣ StudentCourse dan ham o‘chiramiz
+    db.query(StudentCourse).filter(StudentCourse.student_id == student.id).delete(synchronize_session=False)
+
+    # 3️⃣ Student o‘zi
     db.delete(student)
     db.commit()
-    return {"detail": f"Student '{student.full_name}' deleted successfully"}
+
+    return {"detail": f"✅ Student '{student.full_name}' deleted successfully"}
