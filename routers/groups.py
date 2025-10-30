@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 from typing import List
 
 from .dependencies import get_db
-from .models import Group, Course, User, UserRole, StudentCourse, group_students
+from .models import Group, Course, User, UserRole, StudentCourse, group_students, group_teachers
 from .schemas import GroupCreate, GroupUpdate, GroupResponse, UserResponse
 
 groups_router = APIRouter(prefix="/groups", tags=["Groups"])
@@ -167,16 +167,31 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Group not found")
 
     try:
-        # 1️⃣ Attendance yozuvlarini o‘chirish (bu guruhga tegishli)
+        # IMPORT kerak bo'lsa ichida
         from .models import Attendance, Payment
 
-        db.query(Attendance).filter(Attendance.group_id == group_id).delete()
-        db.query(Payment).filter(Payment.group_id == group_id).delete()
+        # 1) Association table: group_teachers (agar bor bo'lsa) - o'chirish
+        #    (Bu nomni sizning loyihangizdagi nomga moslang)
+        if "group_teachers" in db.bind.table_names():
+            db.execute(
+                # SQLAlchemy Core delete on association table
+                # group_teachers must be imported/available in this module scope
+                # If you have a table object `group_teachers`, use that.
+                group_teachers.delete().where(group_teachers.c.group_id == group_id)
+            )
 
-        # 2️⃣ Guruh-talaba bog‘lanmasini o‘chirish
-        db.execute(group_students.delete().where(group_students.c.group_id == group_id))
+        # 2) group_students association (many-to-many) - o'chirish
+        if "group_students" in db.bind.table_names():
+            db.execute(group_students.delete().where(group_students.c.group_id == group_id))
 
-        # 3️⃣ Foydalanuvchilardan group_id ni olib tashlash
+        # 3) Attendance yozuvlarini o'chirish (guruhga tegishli)
+        db.query(Attendance).filter(Attendance.group_id == group_id).delete(synchronize_session=False)
+
+        # 4) Payment yozuvlarini o'chirish (agar kerak bo'lsa)
+        db.query(Payment).filter(Payment.group_id == group_id).delete(synchronize_session=False)
+
+        # 5) Agar User jadvalidagi group_id NOT NULL bo'lsa - uni NULL qilish kerak.
+        #    (Agar column NOT NULL bo'lsa, bu qadam raiser; lekin avval group_students va attendances o'chirilgan bo'lsa OK)
         if "group_id" in User.__table__.c:
             db.execute(
                 User.__table__.update()
@@ -184,14 +199,14 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
                 .values(group_id=None)
             )
 
-        # 4️⃣ Guruhning o‘zini o‘chirish
+        # 6) Oxirida Groupni o'chirish
         db.delete(group)
         db.commit()
-
         return {"message": f"✅ Group '{group.name}' deleted successfully"}
 
     except Exception as e:
         db.rollback()
+        # Ko'proq ma'lumot uchun raw exceptionni qaytaramiz (faqat developmentda)
         raise HTTPException(status_code=400, detail=f"Could not delete group: {str(e)}")
 
 
