@@ -1,10 +1,10 @@
-# routers/payments.py
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text
+from sqlalchemy import func
 from typing import List, Optional
 from datetime import date, datetime
+import calendar
 
 from .dependencies import get_db, get_current_user
 from .models import User, UserRole, Payment, PaymentStatus, Group, Course
@@ -12,15 +12,20 @@ from .schemas import PaymentResponse
 
 payments_router = APIRouter(prefix="/payments", tags=["Payments"])
 
-
 # ================= Helperlar =================
 class CalculateMonthPayload(BaseModel):
     month: Optional[str] = None  # "YYYY-MM"
 
-
 def _to_yyyy_mm(dt: date) -> str:
     return dt.strftime("%Y-%m")
 
+def _update_payment_status(payment: Payment):
+    if payment.debt_amount <= 0:
+        payment.status = PaymentStatus.paid
+    elif payment.amount > 0:
+        payment.status = PaymentStatus.partial
+    else:
+        payment.status = PaymentStatus.unpaid
 
 # ================= GET /payments =================
 @payments_router.get("/", response_model=List[PaymentResponse])
@@ -33,6 +38,8 @@ def get_payments(
     teacher_id: Optional[int] = Query(None),
     month: Optional[str] = Query(None),
     year: Optional[int] = Query(None),
+    skip: int = 0,
+    limit: int = 50,
 ):
     q = db.query(Payment)
 
@@ -56,13 +63,12 @@ def get_payments(
     if year:
         q = q.filter(func.substr(Payment.month, 1, 4) == str(year))
 
-    payments = q.order_by(Payment.created_at.desc()).all()
+    payments = q.order_by(Payment.created_at.desc()).offset(skip).limit(limit).all()
 
     for p in payments:
         p.is_overdue = bool(p.due_date and p.due_date < date.today() and p.status != PaymentStatus.paid)
 
     return payments
-
 
 # ================= POST /payments =================
 @payments_router.post("/", response_model=PaymentResponse)
@@ -90,11 +96,19 @@ def create_payment(
         month = _to_yyyy_mm(date.today())
 
     course_price = group.course.price if group.course else 0
-    debt_amount = max(course_price - amount, 0)
+
+    # Oldingi qarzlarni olish
+    prev_debt = db.query(func.sum(Payment.debt_amount)).filter(
+        Payment.student_id == student.id,
+        Payment.group_id == group.id,
+        Payment.month < month
+    ).scalar() or 0.0
+
+    debt_amount = max(course_price + prev_debt - amount, 0)
 
     if debt_amount == 0:
         status = PaymentStatus.paid
-    elif 0 < amount < course_price:
+    elif 0 < amount < course_price + prev_debt:
         status = PaymentStatus.partial
     else:
         status = PaymentStatus.unpaid
@@ -113,7 +127,7 @@ def create_payment(
 
     db.add(payment)
 
-    # Agar ortiqcha to‘lov bo‘lsa — balansga qo‘shamiz
+    # Ortikcha to‘lov
     if amount > course_price and course_price > 0:
         extra = amount - course_price
         student.balance = (student.balance or 0) + extra
@@ -121,7 +135,6 @@ def create_payment(
     db.commit()
     db.refresh(payment)
     return payment
-
 
 # ================= GET /payments/student/{id} =================
 @payments_router.get("/student/{student_id}")
@@ -166,7 +179,6 @@ def get_student_history(
         "history": history,
     }
 
-
 # ================= POST /payments/calculate-monthly =================
 @payments_router.post("/calculate-monthly")
 def calculate_monthly(
@@ -181,9 +193,8 @@ def calculate_monthly(
     month = payload.month or _to_yyyy_mm(today)
     created, updated = 0, 0
 
-    # Oyning kunlari (har doim 30 deb olamiz yoki hozirgi oyning oxiri)
-    days_in_month = 30
-    current_day = today.day
+    year_int, month_int = map(int, month.split("-"))
+    days_in_month = calendar.monthrange(year_int, month_int)[1]
 
     groups = db.query(Group).all()
 
@@ -195,20 +206,16 @@ def calculate_monthly(
         students = db.query(User).filter(User.group_id == g.id, User.role == UserRole.student).all()
 
         for s in students:
-            # === 1. O‘quvchi qachon qo‘shilganini aniqlaymiz ===
             joined_date = s.created_at.date() if hasattr(s, "created_at") and s.created_at else today
             joined_month = _to_yyyy_mm(joined_date)
 
-            # Agar o‘quvchi bu oyda qo‘shilgan bo‘lsa — faqat qolgan kunlarga qarz
             if joined_month == month:
                 join_day = joined_date.day
                 days_active = max(days_in_month - join_day + 1, 1)
                 monthly_due = round(course_price * (days_active / days_in_month), 2)
             else:
-                # Aks holda, bugungi kungacha to‘liq oy hisob
-                monthly_due = round(course_price * (min(current_day, days_in_month) / days_in_month), 2)
+                monthly_due = round(course_price, 2)
 
-            # === 2. Oldingi oylardan qarz bo‘lsa, qo‘shamiz ===
             prev_unpaid = db.query(func.sum(Payment.debt_amount)).filter(
                 Payment.student_id == s.id,
                 Payment.group_id == g.id,
@@ -217,7 +224,6 @@ def calculate_monthly(
 
             total_due = monthly_due + prev_unpaid
 
-            # === 3. To‘lov yozuvi mavjudmi tekshiramiz ===
             existing = db.query(Payment).filter(
                 Payment.student_id == s.id,
                 Payment.group_id == g.id,
@@ -226,16 +232,9 @@ def calculate_monthly(
 
             if existing:
                 existing.debt_amount = max(total_due - (existing.amount or 0), 0)
-                existing.status = (
-                    PaymentStatus.paid
-                    if existing.debt_amount <= 0
-                    else PaymentStatus.partial
-                    if existing.amount > 0
-                    else PaymentStatus.unpaid
-                )
+                _update_payment_status(existing)
                 updated += 1
             else:
-                # === 4. Yangi qarz yozuvi yaratamiz ===
                 new_p = Payment(
                     amount=0.0,
                     description=f"{month} uchun avtomatik hisoblangan qarz",
@@ -256,14 +255,13 @@ def calculate_monthly(
         "month": month,
     }
 
-
-
 # ================= GET /payments/summary =================
 @payments_router.get("/summary")
 def get_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     month: Optional[str] = Query(None),
+    group_id: Optional[int] = Query(None),
 ):
     q = db.query(
         func.sum(Payment.amount).label("total_paid"),
@@ -273,6 +271,8 @@ def get_summary(
 
     if month:
         q = q.filter(Payment.month == month)
+    if group_id:
+        q = q.filter(Payment.group_id == group_id)
 
     if current_user.role == UserRole.teacher:
         q = q.filter(Payment.teacher_id == current_user.id)
