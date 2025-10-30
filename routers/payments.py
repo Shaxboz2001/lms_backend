@@ -277,7 +277,7 @@ def calculate_monthly(
                 "student_id": s.id,
                 "student_name": s.full_name,
                 "group_name": g.name,
-                "course_name": course.name if course else None,
+                "course_title": course.title if course else None,
                 "lessons_attended": counted_lessons,
                 "lesson_price": lesson_price,
                 "monthly_due": monthly_due,
