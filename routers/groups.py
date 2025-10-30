@@ -167,14 +167,29 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Group not found")
 
     try:
+        # 1️⃣ Attendance yozuvlarini o‘chirish (bu guruhga tegishli)
+        from .models import Attendance, Payment
+
+        db.query(Attendance).filter(Attendance.group_id == group_id).delete()
+        db.query(Payment).filter(Payment.group_id == group_id).delete()
+
+        # 2️⃣ Guruh-talaba bog‘lanmasini o‘chirish
         db.execute(group_students.delete().where(group_students.c.group_id == group_id))
+
+        # 3️⃣ Foydalanuvchilardan group_id ni olib tashlash
         if "group_id" in User.__table__.c:
             db.execute(
-                User.__table__.update().where(User.__table__.c.group_id == group_id).values(group_id=None)
+                User.__table__.update()
+                .where(User.__table__.c.group_id == group_id)
+                .values(group_id=None)
             )
+
+        # 4️⃣ Guruhning o‘zini o‘chirish
         db.delete(group)
         db.commit()
-        return {"message": "Group deleted successfully"}
+
+        return {"message": f"✅ Group '{group.name}' deleted successfully"}
+
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Could not delete group: {str(e)}")
