@@ -181,28 +181,51 @@ def calculate_monthly(
     month = payload.month or _to_yyyy_mm(today)
     created, updated = 0, 0
 
+    # Oyning kunlari (har doim 30 deb olamiz yoki hozirgi oyning oxiri)
+    days_in_month = 30
+    current_day = today.day
+
     groups = db.query(Group).all()
+
     for g in groups:
         course_price = g.course.price if g.course else 0
+        if course_price <= 0:
+            continue
+
         students = db.query(User).filter(User.group_id == g.id, User.role == UserRole.student).all()
 
         for s in students:
+            # === 1. O‘quvchi qachon qo‘shilganini aniqlaymiz ===
+            joined_date = s.created_at.date() if hasattr(s, "created_at") and s.created_at else today
+            joined_month = _to_yyyy_mm(joined_date)
+
+            # Agar o‘quvchi bu oyda qo‘shilgan bo‘lsa — faqat qolgan kunlarga qarz
+            if joined_month == month:
+                join_day = joined_date.day
+                days_active = max(days_in_month - join_day + 1, 1)
+                monthly_due = round(course_price * (days_active / days_in_month), 2)
+            else:
+                # Aks holda, bugungi kungacha to‘liq oy hisob
+                monthly_due = round(course_price * (min(current_day, days_in_month) / days_in_month), 2)
+
+            # === 2. Oldingi oylardan qarz bo‘lsa, qo‘shamiz ===
             prev_unpaid = db.query(func.sum(Payment.debt_amount)).filter(
                 Payment.student_id == s.id,
                 Payment.group_id == g.id,
                 Payment.month < month,
-            ).scalar() or 0
+            ).scalar() or 0.0
 
+            total_due = monthly_due + prev_unpaid
+
+            # === 3. To‘lov yozuvi mavjudmi tekshiramiz ===
             existing = db.query(Payment).filter(
                 Payment.student_id == s.id,
                 Payment.group_id == g.id,
                 Payment.month == month,
             ).first()
 
-            final_debt = max(course_price + prev_unpaid, 0)
-
             if existing:
-                existing.debt_amount = final_debt - (existing.amount or 0)
+                existing.debt_amount = max(total_due - (existing.amount or 0), 0)
                 existing.status = (
                     PaymentStatus.paid
                     if existing.debt_amount <= 0
@@ -212,22 +235,27 @@ def calculate_monthly(
                 )
                 updated += 1
             else:
-                p = Payment(
-                    amount=0,
-                    description=f"{month} uchun qarz",
+                # === 4. Yangi qarz yozuvi yaratamiz ===
+                new_p = Payment(
+                    amount=0.0,
+                    description=f"{month} uchun avtomatik hisoblangan qarz",
                     student_id=s.id,
                     teacher_id=g.teacher_id,
                     group_id=g.id,
                     month=month,
-                    debt_amount=final_debt,
-                    status=PaymentStatus.unpaid,
+                    debt_amount=total_due,
+                    status=PaymentStatus.unpaid if total_due > 0 else PaymentStatus.paid,
                     created_at=datetime.utcnow(),
                 )
-                db.add(p)
+                db.add(new_p)
                 created += 1
 
     db.commit()
-    return {"message": f"Hisoblash yakunlandi: {created} yangi, {updated} yangilandi", "month": month}
+    return {
+        "message": f"✅ Hisoblash yakunlandi: {created} yangi, {updated} yangilandi.",
+        "month": month,
+    }
+
 
 
 # ================= GET /payments/summary =================
