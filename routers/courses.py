@@ -136,3 +136,40 @@ def get_teacher_courses(teacher_id: int, db: Session = Depends(get_db), current_
 
     return courses
 
+@courses_router.delete("/{course_id}")
+def delete_course(
+    course_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Faqat admin yoki manager o‘chira oladi
+    if current_user.role not in [UserRole.admin, UserRole.manager]:
+        raise HTTPException(status_code=403, detail="Faqat admin yoki manager o‘chira oladi")
+
+    course = db.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    try:
+        # Importlar kerak bo‘lishi mumkin
+        from .models import Group, StudentCourse, Payment
+
+        # 1️⃣ StudentCourse (many-to-many jadval) yozuvlarini o‘chirish
+        db.query(StudentCourse).filter(StudentCourse.course_id == course_id).delete(synchronize_session=False)
+
+        # 2️⃣ Group jadvalidagi bog‘liqliklarni NULL qilish (agar groupda course_id mavjud bo‘lsa)
+        db.query(Group).filter(Group.course_id == course_id).update({Group.course_id: None})
+
+        # 3️⃣ Payment jadvalida course_id mavjud bo‘lsa NULL qilish
+        if hasattr(Payment, "course_id"):
+            db.query(Payment).filter(Payment.course_id == course_id).update({Payment.course_id: None})
+
+        # 4️⃣ O‘zi Course ni o‘chirish
+        db.delete(course)
+        db.commit()
+
+        return {"message": f"✅ Course '{course.title}' deleted successfully"}
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Could not delete course: {str(e)}")
