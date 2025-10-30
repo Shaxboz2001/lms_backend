@@ -86,7 +86,7 @@ class UserResponse(UserBase):
 # ==============================
 class CourseBase(BaseModel):
     title: str
-    subject: str
+    subject: Optional[str] = None
     teacher_id: int
     description: Optional[str] = None
     start_date: Optional[date] = None
