@@ -7,7 +7,7 @@ from datetime import date, datetime
 import calendar
 
 from .dependencies import get_db, get_current_user
-from .models import User, UserRole, Payment, PaymentStatus, Group, Course
+from .models import User, UserRole, Payment, PaymentStatus, Group, Course, Attendance
 from .schemas import PaymentResponse
 
 payments_router = APIRouter(prefix="/payments", tags=["Payments"])
@@ -194,7 +194,8 @@ def calculate_monthly(
     created, updated = 0, 0
 
     year_int, month_int = map(int, month.split("-"))
-    days_in_month = calendar.monthrange(year_int, month_int)[1]
+    first_day = date(year_int, month_int, 1)
+    last_day = date(year_int, month_int, calendar.monthrange(year_int, month_int)[1])
 
     groups = db.query(Group).all()
 
@@ -203,19 +204,35 @@ def calculate_monthly(
         if course_price <= 0:
             continue
 
+        # Shu oyda o‘tilgan darslar soni (rejalashtirilgan emas — real attendance asosida)
+        total_lessons = (
+            db.query(func.count(Attendance.id))
+            .filter(
+                Attendance.group_id == g.id,
+                Attendance.date.between(first_day, last_day)
+            ).scalar() or 0
+        )
+        if total_lessons == 0:
+            continue  # bu oyda dars bo‘lmasa, to‘lov ham yo‘q
+
         students = db.query(User).filter(User.group_id == g.id, User.role == UserRole.student).all()
 
         for s in students:
-            joined_date = s.created_at.date() if hasattr(s, "created_at") and s.created_at else today
-            joined_month = _to_yyyy_mm(joined_date)
+            # O‘quvchining qatnashgan darslari soni
+            attended = (
+                db.query(func.count(Attendance.id))
+                .filter(
+                    Attendance.student_id == s.id,
+                    Attendance.group_id == g.id,
+                    Attendance.date.between(first_day, last_day),
+                    Attendance.present == True,
+                ).scalar() or 0
+            )
 
-            if joined_month == month:
-                join_day = joined_date.day
-                days_active = max(days_in_month - join_day + 1, 1)
-                monthly_due = round(course_price * (days_active / days_in_month), 2)
-            else:
-                monthly_due = round(course_price, 2)
+            # O‘quvchiga tegishli oylik haqiqiy to‘lov summasi
+            monthly_due = round(course_price * (attended / total_lessons), 2)
 
+            # Oldingi qarzlarni topamiz
             prev_unpaid = db.query(func.sum(Payment.debt_amount)).filter(
                 Payment.student_id == s.id,
                 Payment.group_id == g.id,
@@ -232,12 +249,13 @@ def calculate_monthly(
 
             if existing:
                 existing.debt_amount = max(total_due - (existing.amount or 0), 0)
+                existing.description = f"{month} uchun {attended}/{total_lessons} dars asosida"
                 _update_payment_status(existing)
                 updated += 1
             else:
                 new_p = Payment(
                     amount=0.0,
-                    description=f"{month} uchun avtomatik hisoblangan qarz",
+                    description=f"{month} uchun {attended}/{total_lessons} dars asosida hisoblandi",
                     student_id=s.id,
                     teacher_id=g.teacher_id,
                     group_id=g.id,
@@ -251,7 +269,7 @@ def calculate_monthly(
 
     db.commit()
     return {
-        "message": f"✅ Hisoblash yakunlandi: {created} yangi, {updated} yangilandi.",
+        "message": f"✅ {month} uchun to‘lovlar hisoblandi: {created} yangi, {updated} yangilandi.",
         "month": month,
     }
 
