@@ -200,6 +200,9 @@ def calculate_monthly(
 
     groups = db.query(Group).all()
 
+    # Report uchun barcha qarzdorlar
+    debtors_report = []
+
     for g in groups:
         course = g.course
         if not course or not course.price:
@@ -208,11 +211,13 @@ def calculate_monthly(
         lessons_per_month = getattr(course, "lessons_per_month", 12)
         lesson_price = course.price / lessons_per_month
 
-        students = db.query(User).filter(User.group_id == g.id, User.role == UserRole.student).all()
+        students = db.query(User).filter(
+            User.group_id == g.id,
+            User.role == UserRole.student
+        ).all()
 
         for s in students:
-            # O‘quvchi uchun darslar
-            from .models import Attendance  # Importni yuqoriga qo‘sh
+            from .models import Attendance  # ichki import
             attendances = db.query(Attendance).filter(
                 Attendance.group_id == g.id,
                 Attendance.student_id == s.id,
@@ -220,7 +225,6 @@ def calculate_monthly(
                 Attendance.date <= month_end
             ).all()
 
-            # To‘lovga tushadigan darslar (present yoki sababsiz kelmagan)
             counted_lessons = sum(
                 1 for a in attendances
                 if a.status == "present" or (a.status == "absent" and a.reason == "sababsiz")
@@ -254,7 +258,7 @@ def calculate_monthly(
                 )
                 updated += 1
             else:
-                new_p = Payment(
+                existing = Payment(
                     amount=0.0,
                     description=f"{month} uchun {counted_lessons} dars asosida hisoblangan qarz",
                     student_id=s.id,
@@ -265,13 +269,36 @@ def calculate_monthly(
                     status=PaymentStatus.unpaid if total_due > 0 else PaymentStatus.paid,
                     created_at=datetime.utcnow(),
                 )
-                db.add(new_p)
+                db.add(existing)
                 created += 1
 
+            # Reportga qo‘shish
+            debtors_report.append({
+                "student_id": s.id,
+                "student_name": s.full_name,
+                "group_name": g.name,
+                "course_name": course.name if course else None,
+                "lessons_attended": counted_lessons,
+                "lesson_price": lesson_price,
+                "monthly_due": monthly_due,
+                "previous_debt": prev_unpaid,
+                "total_due": total_due,
+                "paid_amount": existing.amount or 0,
+                "debt_amount": existing.debt_amount,
+                "status": existing.status.value,
+            })
+
     db.commit()
+
+    # Sortlab qaytaramiz — kimda qarz bor bo‘lsa, yuqorida chiqadi
+    debtors_report = sorted(debtors_report, key=lambda x: x["debt_amount"], reverse=True)
+
     return {
         "message": f"✅ Hisoblash yakunlandi: {created} yangi, {updated} yangilandi.",
         "month": month,
+        "total_students": len(debtors_report),
+        "debtors": [d for d in debtors_report if d["debt_amount"] > 0],  # faqat qarzdorlar
+        "all_students": debtors_report,  # hammasi (qarzdor + to‘laganlar)
     }
 
 # ================= GET /payments/summary =================
