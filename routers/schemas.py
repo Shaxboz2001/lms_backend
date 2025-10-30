@@ -30,7 +30,7 @@ class UserBase(BaseModel):
     full_name: Optional[str]
     phone: Optional[str]
     address: Optional[str]
-    subject: Optional[str]
+    subject: Optional[str] = None
     fee: Optional[float]
     status: Optional[StudentStatus] = StudentStatus.studying
     role: Optional[RoleEnum] = RoleEnum.student
@@ -80,6 +80,23 @@ class UserResponse(UserBase):
     class Config:
         from_attributes = True
 
+
+class StudentUpdate(BaseModel):
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    age: Optional[int] = None
+    subject: Optional[str] = None
+    fee: Optional[float] = None
+    status: Optional[StudentStatus] = None
+    password: Optional[str] = None
+    course_id: Optional[int] = None  # 🟢 kursini yangilash uchun
+    group_id: Optional[int] = None
+    teacher_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
 
 # ==============================
 # COURSE SCHEMAS

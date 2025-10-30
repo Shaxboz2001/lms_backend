@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from passlib.context import CryptContext
 from .dependencies import get_db, get_current_user
-from .schemas import UserResponse, UserCreate, UserBase
+from .schemas import UserResponse, UserCreate, UserBase, StudentUpdate
 from .models import User, UserRole, StudentStatus, Course, StudentCourse, StudentAnswer
 
 students_router = APIRouter(
@@ -102,7 +102,7 @@ def get_student(
 @students_router.put("/{student_id}", response_model=UserResponse)
 def update_student(
     student_id: int,
-    updated: UserBase,
+    updated: StudentUpdate,  # 🟢 endi StudentUpdate schema ishlatyapti
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -125,17 +125,11 @@ def update_student(
         if not new_course:
             raise HTTPException(status_code=404, detail="New course not found")
 
-        # Eski enrolmentni o‘chir
         db.query(StudentCourse).filter(StudentCourse.student_id == student.id).delete()
-
-        # Yangi enrolment qo‘sh
-        new_enrollment = StudentCourse(
-            student_id=student.id,
-            course_id=update_data["course_id"]
-        )
+        new_enrollment = StudentCourse(student_id=student.id, course_id=update_data["course_id"])
         db.add(new_enrollment)
 
-        update_data["fee"] = new_course.price
+        update_data["fee"] = new_course.price  # kurs narxiga tenglashtirish
 
     # 🧩 Ma'lumotlarni yangilash
     for key, value in update_data.items():
@@ -144,6 +138,7 @@ def update_student(
     db.commit()
     db.refresh(student)
     return student
+
 
 
 # ✅ Studentni o‘chirish
