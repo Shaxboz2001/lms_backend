@@ -143,11 +143,10 @@ def get_student_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # 🔐 Ruxsat nazorati
     if current_user.role not in [UserRole.admin, UserRole.manager] and current_user.id != student_id:
         raise HTTPException(status_code=403, detail="Ruxsat yo‘q!")
 
-    # 🎓 O‘quvchini olish
+    # 🔹 Studentni olish
     student = (
         db.query(User)
         .filter(User.id == student_id, User.role == UserRole.student)
@@ -156,7 +155,21 @@ def get_student_history(
     if not student:
         raise HTTPException(status_code=404, detail="O‘quvchi topilmadi.")
 
-    # 💳 To‘lovlar ro‘yxatini olish
+    # 🔹 Student guruhini olish
+    group = (
+        db.query(Group)
+        .filter(Group.id == student.group_id)
+        .options(joinedload(Group.course))
+        .first()
+    )
+    if not group or not group.course:
+        raise HTTPException(status_code=404, detail="Guruh yoki kurs topilmadi.")
+
+    course = group.course
+    lessons_per_month = getattr(course, "lessons_per_month", 12)
+    lesson_price = course.price / lessons_per_month
+
+    # 🔹 Barcha mavjud oylik to‘lovlar
     payments = (
         db.query(Payment)
         .filter(Payment.student_id == student_id)
@@ -164,43 +177,82 @@ def get_student_history(
         .all()
     )
 
+    # 🔹 Attendance ma'lumotlariga asoslangan qarzni qayta hisoblash
     history = []
     total_paid = 0
-    total_due = 0  # jami to‘lanishi kerak bo‘lgan summa
+    total_debt = 0
+    total_balance = student.balance or 0
 
     for p in payments:
-        course_price = p.group.course.price if p.group and p.group.course else 0
-        total_paid += p.amount or 0
-        total_due += course_price or 0
-
-        # 🕒 vaqtni chiroyli formatda chiqarish
-        formatted_time = (
-            p.created_at.strftime("%Y-%m-%d %H:%M")
-            if p.created_at
-            else None
+        # Oyga mos darslarni topish
+        year, month_num = map(int, p.month.split("-"))
+        month_start = date(year, month_num, 1)
+        month_end = date(year, month_num, 28)  # oy oxiri uchun taxminiy qiymat
+        attendances = (
+            db.query(Attendance)
+            .filter(
+                Attendance.group_id == group.id,
+                Attendance.student_id == student.id,
+                Attendance.date >= month_start,
+                Attendance.date <= month_end,
+            )
+            .all()
         )
 
-        history.append({
-            "id": p.id,
-            "month": p.month,
-            "amount": p.amount,
-            "debt_amount": max(course_price - (p.amount or 0), 0),
-            "status": p.status,
-            "group_name": p.group.name if p.group else None,
-            "course_name": p.group.course.title if p.group and p.group.course else None,
-            "created_at": formatted_time,
-        })
+        counted_lessons = sum(
+            1
+            for a in attendances
+            if a.status == "present" or (a.status == "absent" and a.reason == "sababsiz")
+        )
+        monthly_due = round(counted_lessons * lesson_price, 2)
 
-    # ⚖️ To‘liq balans va qarzdorlik
-    total_debt = max(total_due - total_paid, 0)
+        # Qarzdorlik yoki ortiqcha to‘lovni hisoblash
+        debt_amount = monthly_due - (p.amount or 0)
+        if debt_amount < 0:
+            # Ortiqcha to‘lov balansga yoziladi
+            total_balance += abs(debt_amount)
+            debt_amount = 0
 
+        status = (
+            "paid"
+            if debt_amount <= 0
+            else "partial"
+            if (p.amount or 0) > 0
+            else "unpaid"
+        )
+
+        total_paid += p.amount or 0
+        total_debt += debt_amount
+
+        history.append(
+            {
+                "id": p.id,
+                "month": p.month,
+                "amount": p.amount,
+                "debt_amount": debt_amount,
+                "status": status,
+                "lessons_attended": counted_lessons,
+                "monthly_due": monthly_due,
+                "group_name": group.name,
+                "course_name": course.title,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+        )
+
+    # 🔹 Student balansini yangilash
+    student.balance = total_balance
+    db.commit()
+
+    # 🔹 Natija
     return {
         "student_id": student.id,
         "student_name": student.full_name or student.username,
-        "total_paid": total_paid,
-        "total_due": total_due,
-        "total_debt": total_debt,
-        "balance": student.balance or 0,
+        "group_name": group.name,
+        "course_name": course.title,
+        "lesson_price": lesson_price,
+        "total_paid": round(total_paid, 2),
+        "total_debt": round(total_debt, 2),
+        "balance": round(total_balance, 2),
         "history": history,
     }
 
