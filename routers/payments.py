@@ -143,41 +143,67 @@ def get_student_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # 🔐 Ruxsat nazorati
     if current_user.role not in [UserRole.admin, UserRole.manager] and current_user.id != student_id:
         raise HTTPException(status_code=403, detail="Ruxsat yo‘q!")
 
-    student = db.query(User).filter(User.id == student_id, User.role == UserRole.student).first()
+    # 🎓 O‘quvchini olish
+    student = (
+        db.query(User)
+        .filter(User.id == student_id, User.role == UserRole.student)
+        .first()
+    )
     if not student:
         raise HTTPException(status_code=404, detail="O‘quvchi topilmadi.")
 
-    payments = db.query(Payment).filter(Payment.student_id == student_id).order_by(Payment.created_at.desc()).all()
+    # 💳 To‘lovlar ro‘yxatini olish
+    payments = (
+        db.query(Payment)
+        .filter(Payment.student_id == student_id)
+        .order_by(Payment.created_at.desc())
+        .all()
+    )
 
     history = []
     total_paid = 0
-    total_debt = 0
+    total_due = 0  # jami to‘lanishi kerak bo‘lgan summa
 
     for p in payments:
+        course_price = p.group.course.price if p.group and p.group.course else 0
         total_paid += p.amount or 0
-        total_debt += p.debt_amount or 0
+        total_due += course_price or 0
+
+        # 🕒 vaqtni chiroyli formatda chiqarish
+        formatted_time = (
+            p.created_at.strftime("%Y-%m-%d %H:%M")
+            if p.created_at
+            else None
+        )
+
         history.append({
             "id": p.id,
             "month": p.month,
             "amount": p.amount,
-            "debt_amount": p.debt_amount,
+            "debt_amount": max(course_price - (p.amount or 0), 0),
             "status": p.status,
             "group_name": p.group.name if p.group else None,
             "course_name": p.group.course.title if p.group and p.group.course else None,
-            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "created_at": formatted_time,
         })
+
+    # ⚖️ To‘liq balans va qarzdorlik
+    total_debt = max(total_due - total_paid, 0)
 
     return {
         "student_id": student.id,
         "student_name": student.full_name or student.username,
         "total_paid": total_paid,
+        "total_due": total_due,
         "total_debt": total_debt,
         "balance": student.balance or 0,
         "history": history,
     }
+
 
 # ================= POST /payments/calculate-monthly =================
 @payments_router.post("/calculate-monthly")
