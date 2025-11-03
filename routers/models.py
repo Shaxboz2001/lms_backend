@@ -314,3 +314,24 @@ class PayrollPayment(Base):
     paid_amount = Column(Float, nullable=False)
     paid_by = Column(Integer, ForeignKey("users.id"))  # admin who paid
     paid_at = Column(DateTime, default=datetime.utcnow)
+
+# ==============================
+# SCHEDULE MODEL
+# ==============================
+class Schedule(Base):
+    __tablename__ = "schedules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    day_of_week = Column(String, nullable=False)  # Monday, Tuesday...
+    start_time = Column(String, nullable=False)   # HH:MM
+    end_time = Column(String, nullable=False)
+    room = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, onupdate=datetime.utcnow, default=datetime.utcnow)
+
+    # 🔹 Relationships
+    group = relationship("Group", backref="schedules")
+    teacher = relationship("User", backref="schedules")
+

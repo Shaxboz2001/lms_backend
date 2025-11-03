@@ -280,3 +280,46 @@ class TestResultResponse(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+# ==============================
+# SCHEDULE SCHEMAS
+# ==============================
+class ScheduleBase(BaseModel):
+    group_id: int
+    teacher_id: int
+    day_of_week: str
+    start_time: str
+    end_time: str
+    room: Optional[str] = None
+
+
+class ScheduleCreate(ScheduleBase):
+    pass
+
+
+class ScheduleUpdate(BaseModel):
+    group_id: Optional[int] = None
+    teacher_id: Optional[int] = None
+    day_of_week: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    room: Optional[str] = None
+
+
+class ScheduleResponse(BaseModel):
+    id: int
+    group_id: int
+    teacher_id: int
+    day_of_week: str
+    start_time: str
+    end_time: str
+    room: Optional[str]
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    group: Optional[GroupResponse] = None
+    teacher: Optional[UserResponse] = None
+
+    class Config:
+        from_attributes = True
