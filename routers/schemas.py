@@ -287,7 +287,7 @@ class TestResultResponse(BaseModel):
 # ==============================
 class ScheduleBase(BaseModel):
     group_id: int
-    teacher_id: int
+    teacher_id: Optional[int] = None  # <-- majburiy emas
     day_of_week: str
     start_time: str
     end_time: str
