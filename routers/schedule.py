@@ -64,17 +64,27 @@ def create_schedule(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # 👮‍♂️ Ruxsat tekshiruvi
     if current_user.role not in [UserRole.admin, UserRole.manager, UserRole.teacher]:
         raise HTTPException(status_code=403, detail="Ruxsat yo‘q")
 
-    # Guruhni tekshiramiz
+    # 👇 Guruhni topamiz
     group = db.query(Group).filter(Group.id == req.group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
 
-    # Agar teacher bo‘lsa — faqat o‘z guruhida dars qo‘shsin
-    teacher_id = current_user.id if current_user.role == UserRole.teacher else group.teacher_id
+    # 👇 Teacher bo‘lsa — faqat o‘z guruhida dars yaratadi
+    if current_user.role == UserRole.teacher:
+        if group.teacher_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Bu guruh sizniki emas")
+        teacher_id = current_user.id
+    else:
+        # Admin yoki Manager — guruhdan teacher_id oladi
+        teacher_id = group.teacher_id
+        if not teacher_id:
+            raise HTTPException(status_code=400, detail="Guruhga ustoz biriktirilmagan")
 
+    # 👇 Yangi jadvalni yaratamiz
     new_item = Schedule(
         group_id=req.group_id,
         teacher_id=teacher_id,
@@ -82,7 +92,9 @@ def create_schedule(
         start_time=req.start_time,
         end_time=req.end_time,
         room=req.room,
+        created_at=datetime.utcnow(),
     )
+
     db.add(new_item)
     db.commit()
     db.refresh(new_item)
