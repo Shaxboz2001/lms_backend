@@ -2,42 +2,43 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
-from .. import models, schema
-from ..database import get_db
-from ..auth import get_current_user
+from .dependencies import get_db
+from .auth import get_current_user
+from .models import User, UserRole, Schedule, Group
+from .schemas import ScheduleResponse, ScheduleCreate, ScheduleUpdate, ScheduleBase
 
 schedules_router = APIRouter(prefix="/schedules", tags=["Schedules"])
 
 # ✅ 1. Barcha jadvalni olish
-@schedules_router.get("/", response_model=List[schema.ScheduleResponse])
+@schedules_router.get("/", response_model=List[ScheduleResponse])
 def get_all_schedules(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in [models.UserRole.admin, models.UserRole.manager]:
+    if current_user.role not in [UserRole.admin, UserRole.manager]:
         raise HTTPException(status_code=403, detail="Ruxsat yo‘q")
-    schedules = db.query(models.Schedule).all()
+    schedules = db.query(Schedule).all()
     return schedules
 
 
 # ✅ 2. Teacher o‘z jadvalini ko‘rish
-@schedules_router.get("/my", response_model=List[schema.ScheduleResponse])
+@schedules_router.get("/my", response_model=List[ScheduleResponse])
 def get_my_schedules(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    if current_user.role != models.UserRole.teacher:
+    if current_user.role != UserRole.teacher:
         raise HTTPException(status_code=403, detail="Faqat ustozlar uchun")
-    return db.query(models.Schedule).filter(models.Schedule.teacher_id == current_user.id).all()
+    return db.query(Schedule).filter(Schedule.teacher_id == current_user.id).all()
 
 # ✅ 3. Student o‘z guruhining jadvalini ko‘rish
-@schedules_router.get("/student", response_model=List[schema.ScheduleResponse])
+@schedules_router.get("/student", response_model=List[ScheduleResponse])
 def get_student_schedules(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     # faqat studentlar uchun
-    if current_user.role != models.UserRole.student:
+    if current_user.role != UserRole.student:
         raise HTTPException(status_code=403, detail="Faqat o‘quvchilar uchun")
 
     # student qaysi guruhlarga a'zo — group_students orqali
@@ -48,31 +49,31 @@ def get_student_schedules(
 
     # faqat shu guruhlarning jadvali chiqadi
     schedules = (
-        db.query(models.Schedule)
-        .filter(models.Schedule.group_id.in_(group_ids))
-        .order_by(models.Schedule.day_of_week)
+        db.query(Schedule)
+        .filter(Schedule.group_id.in_(group_ids))
+        .order_by(Schedule.day_of_week)
         .all()
     )
     return schedules
 
 
 # ✅ 4. Yangi jadval yaratish
-@schedules_router.post("/", response_model=schema.ScheduleResponse)
+@schedules_router.post("/", response_model=ScheduleResponse)
 def create_schedule(
-    req: schema.ScheduleCreate,
+    req: ScheduleCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in [models.UserRole.admin, models.UserRole.manager, models.UserRole.teacher]:
+    if current_user.role not in [UserRole.admin, UserRole.manager, UserRole.teacher]:
         raise HTTPException(status_code=403, detail="Ruxsat yo‘q")
 
     # Teacher o‘z guruhidagina dars yarata oladi
-    if current_user.role == models.UserRole.teacher:
-        group = db.query(models.Group).filter(models.Group.id == req.group_id).first()
+    if current_user.role == UserRole.teacher:
+        group = db.query(Group).filter(Group.id == req.group_id).first()
         if not group or group.teacher_id != current_user.id:
             raise HTTPException(status_code=403, detail="Bu guruh sizniki emas")
 
-    new_item = models.Schedule(**req.dict())
+    new_item = Schedule(**req.dict())
     db.add(new_item)
     db.commit()
     db.refresh(new_item)
@@ -80,19 +81,19 @@ def create_schedule(
 
 
 # ✅ 5. Jadvalni tahrirlash
-@schedules_router.put("/{schedule_id}", response_model=schema.ScheduleResponse)
+@schedules_router.put("/{schedule_id}", response_model=ScheduleResponse)
 def update_schedule(
     schedule_id: int,
-    req: schema.ScheduleUpdate,
+    req: ScheduleUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    schedule = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
+    schedule = db.query(Schedule).filter(Schedule.id == schedule_id).first()
     if not schedule:
         raise HTTPException(status_code=404, detail="Jadval topilmadi")
 
     # Teacher faqat o‘z darsini tahrirlaydi
-    if current_user.role == models.UserRole.teacher and schedule.teacher_id != current_user.id:
+    if current_user.role == UserRole.teacher and schedule.teacher_id != current_user.id:
         raise HTTPException(status_code=403, detail="Siz bu jadvalni o‘zgartira olmaysiz")
 
     for key, value in req.dict(exclude_unset=True).items():
@@ -109,16 +110,16 @@ def update_schedule(
 def delete_schedule(
     schedule_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    schedule = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
+    schedule = db.query(Schedule).filter(Schedule.id == schedule_id).first()
     if not schedule:
         raise HTTPException(status_code=404, detail="Jadval topilmadi")
 
-    if current_user.role == models.UserRole.teacher and schedule.teacher_id != current_user.id:
+    if current_user.role == UserRole.teacher and schedule.teacher_id != current_user.id:
         raise HTTPException(status_code=403, detail="Siz faqat o‘z darslaringizni o‘chira olasiz")
 
-    if current_user.role not in [models.UserRole.admin, models.UserRole.manager, models.UserRole.teacher]:
+    if current_user.role not in [UserRole.admin, UserRole.manager, UserRole.teacher]:
         raise HTTPException(status_code=403, detail="Ruxsat yo‘q")
 
     db.delete(schedule)
