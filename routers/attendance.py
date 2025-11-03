@@ -5,6 +5,7 @@ from datetime import datetime, date
 from .models import User, UserRole, Group, Attendance
 from .dependencies import get_db, get_current_user
 from .schemas import AttendanceResponse, AttendanceCreate
+from calendar import monthrange
 
 attend_router = APIRouter(
     prefix="/attendance",
@@ -100,6 +101,7 @@ def update_reason(
 def get_group_report(
     group_id: int,
     month: Optional[int] = Query(None),
+    year: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -107,12 +109,14 @@ def get_group_report(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    today = datetime.utcnow()
+    today = datetime.utcnow().date()
     month = month or today.month
-    year = today.year
+    year = year or today.year
 
+    # ✅ To‘liq oyning kunlari (28 emas!)
+    days_in_month = monthrange(year, month)[1]
     first_day = date(year, month, 1)
-    last_day = today if month == today.month else date(year, month, 28)
+    last_day = date(year, month, days_in_month)
 
     students = group.students
 
