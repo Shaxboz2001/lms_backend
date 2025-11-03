@@ -353,7 +353,7 @@ def get_my_attempts(
 
     question_ids = [q.id for q in db.query(Question).filter(Question.test_id == test_id).all()]
     if not question_ids:
-        return {"attempts": []}
+        return {"test_id": test_id, "attempts": []}  # ✅ test_id shu yerda
 
     attempts = (
         db.query(func.date_trunc('second', StudentAnswer.submitted_at).label("attempt_time"))
@@ -385,4 +385,5 @@ def get_my_attempts(
             "total": total_questions
         })
 
-    return {"attempts": output}
+    # ✅ test_id umumiy javobda qaytariladi
+    return {"test_id": test_id, "attempts": output}
