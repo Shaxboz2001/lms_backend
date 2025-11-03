@@ -201,7 +201,7 @@ def get_test_results(
             "student_id": attempt.student_id
         })
 
-    return {"test_name": test.title, "results": output}
+    return {"test_name": test.title, "results": output, 'test_id': test.id}
 
 
 # ✅ Batafsil natija (student/teacher)
