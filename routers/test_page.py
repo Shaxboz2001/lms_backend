@@ -7,9 +7,9 @@ from .dependencies import get_db
 from .auth import get_current_user
 from .models import (
     UserRole, Test, User, Question, Option, group_students,
-    StudentAnswer, Group
+    StudentAnswer, Group, TestGroup
 )
-from .schemas import TestResponse, TestCreate, TestSubmit
+from .schemas import TestResponse, TestCreate, TestSubmit, TestUpdate
 
 tests_router = APIRouter(prefix="/tests", tags=["Tests"])
 
@@ -387,3 +387,23 @@ def get_my_attempts(
 
     # ✅ test_id umumiy javobda qaytariladi
     return {"test_id": test_id, "attempts": output}
+
+# ✅ TESTNI YANGILASH (TEACHER)
+@tests_router.put("/{test_id}")
+def update_test(test_id: int, data: TestUpdate, db: Session = Depends(get_db)):
+    test = db.query(Test).filter(Test.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test topilmadi")
+
+    test.title = data.title
+    test.description = data.description
+
+    # Eski bog‘lanishlarni tozalaymiz
+    db.query(TestGroup).filter(TestGroup.test_id == test.id).delete()
+
+    # Yangi guruhlarni biriktiramiz
+    for gid in data.group_ids:
+        db.add(TestGroup(test_id=test.id, group_id=gid))
+
+    db.commit()
+    return {"message": "✅ Test yangilandi"}

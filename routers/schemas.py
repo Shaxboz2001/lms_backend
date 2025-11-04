@@ -323,3 +323,12 @@ class ScheduleResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+from pydantic import BaseModel
+from typing import List, Optional
+
+
+class TestUpdate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    group_ids: List[int]

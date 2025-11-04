@@ -1,7 +1,7 @@
 from typing import Optional
 from sqlalchemy import (
     Column, Integer, String, Enum, Float, ForeignKey,
-    DateTime, Table, Text, Date, JSON
+    DateTime, Table, Text, Date, JSON, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -208,6 +208,20 @@ class Test(Base):
     group = relationship("Group", back_populates="tests")
     questions = relationship("Question", back_populates="test")
 
+class TestGroup(Base):
+    __tablename__ = "test_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    test_id = Column(Integer, ForeignKey("tests.id", ondelete="CASCADE"))
+    group_id = Column(Integer, ForeignKey("groups.id", ondelete="CASCADE"))
+
+    __table_args__ = (
+        UniqueConstraint("test_id", "group_id", name="unique_test_group"),
+    )
+
+    test = relationship("Test", back_populates="test_groups")
+    group = relationship("Group", back_populates="test_groups")
+
 
 class Question(Base):
     __tablename__ = "questions"
@@ -240,6 +254,8 @@ class StudentAnswer(Base):
     question_id = Column(Integer, ForeignKey("questions.id"))
     selected_option_id = Column(Integer, ForeignKey("options.id"))
     submitted_at = Column(DateTime, default=datetime.utcnow)
+
+
 
 
 # ==============================
