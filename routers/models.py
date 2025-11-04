@@ -143,6 +143,7 @@ class Group(Base):
     attendances = relationship("Attendance", back_populates="group")
     payments = relationship("Payment", back_populates="group")
     tests = relationship("Test", back_populates="group")
+    test_groups = relationship("TestGroup", back_populates="group")
 
 
 # ==============================
@@ -207,6 +208,7 @@ class Test(Base):
 
     group = relationship("Group", back_populates="tests")
     questions = relationship("Question", back_populates="test")
+    test_groups = relationship("TestGroup", back_populates="test")
 
 class TestGroup(Base):
     __tablename__ = "test_groups"
