@@ -256,12 +256,13 @@ class QuestionResponse(BaseModel):
 class TestResponse(BaseModel):
     id: int
     title: str
-    description: Optional[str]
-    group_id: int
-    questions: List[QuestionResponse]
+    description: Optional[str] = None
+    created_by: int
+    group_ids: List[int] = []
+    created_at: datetime
 
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 
 class AnswerItem(BaseModel):

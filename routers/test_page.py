@@ -24,6 +24,7 @@ def create_test(
     if current_user.role != UserRole.teacher:
         raise HTTPException(status_code=403, detail="Faqat teacher test yaratishi mumkin")
 
+    # yangi test yaratamiz (group_id maydoniga hozircha hech nima bermaymiz)
     db_test = Test(
         title=test.title,
         description=test.description,
@@ -34,12 +35,12 @@ def create_test(
     db.commit()
     db.refresh(db_test)
 
-    # ✅ Ko‘p guruhlarni biriktirish
+    # TestGroup orqali biriktirish (ko'p guruh)
     for group_id in test.group_ids:
         db.add(TestGroup(test_id=db_test.id, group_id=group_id))
     db.commit()
 
-    # ✅ Savollarni qo‘shish
+    # savollar va options qo'shish
     for q in test.questions:
         db_question = Question(test_id=db_test.id, text=q.text)
         db.add(db_question)
@@ -55,7 +56,16 @@ def create_test(
             db.add(db_option)
         db.commit()
 
-    return db_test
+    # javobni kerakli formatda qaytaramiz
+    response = {
+        "id": db_test.id,
+        "title": db_test.title,
+        "description": db_test.description,
+        "created_by": db_test.created_by,
+        "group_ids": test.group_ids,
+        "created_at": db_test.created_at,
+    }
+    return response
 
 
 # ✅ Testlarni olish
