@@ -56,21 +56,29 @@ def create_test(
 # ✅ Testlarni olish
 @tests_router.get("/", response_model=List[TestResponse])
 def get_my_tests(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user)
 ):
     if current_user.role == UserRole.student:
         group_ids = [g.id for g in current_user.groups_as_student]
+        if not group_ids:
+            return []
+
+        # 🔹 TestGroup orqali Many-to-Many filter
+        return db.query(Test).join(TestGroup).filter(TestGroup.group_id.in_(group_ids)).all()
+
     elif current_user.role == UserRole.teacher:
         group_ids = [g.id for g in current_user.groups_as_teacher]
+        if not group_ids:
+            return []
+
+        return db.query(Test).join(TestGroup).filter(TestGroup.group_id.in_(group_ids)).all()
+
     elif current_user.role in [UserRole.admin, UserRole.manager]:
         return db.query(Test).all()
+
     else:
         return []
-
-    if not group_ids:
-        return []
-    return db.query(Test).filter(Test.group_id.in_(group_ids)).all()
 
 
 # ✅ Testni olish (Student uchun)
