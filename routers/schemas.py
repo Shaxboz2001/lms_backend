@@ -230,7 +230,7 @@ class QuestionCreate(BaseModel):
 class TestCreate(BaseModel):
     title: str
     description: Optional[str]
-    group_id: int
+    group_ids: List[int]  # ✅ endi massiv
     questions: List[QuestionCreate]
 
 

@@ -28,13 +28,18 @@ def create_test(
         title=test.title,
         description=test.description,
         created_by=current_user.id,
-        group_id=test.group_id,
         created_at=datetime.utcnow()
     )
     db.add(db_test)
     db.commit()
     db.refresh(db_test)
 
+    # ✅ Ko‘p guruhlarni biriktirish
+    for group_id in test.group_ids:
+        db.add(TestGroup(test_id=db_test.id, group_id=group_id))
+    db.commit()
+
+    # ✅ Savollarni qo‘shish
     for q in test.questions:
         db_question = Question(test_id=db_test.id, text=q.text)
         db.add(db_question)
