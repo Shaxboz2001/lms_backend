@@ -207,7 +207,6 @@ class Test(Base):
 
     group = relationship("Group", back_populates="tests")
     questions = relationship("Question", back_populates="test")
-    test_groups = relationship("TestGroup", back_populates="test")
 
 class TestGroup(Base):
     __tablename__ = "test_groups"
@@ -222,7 +221,6 @@ class TestGroup(Base):
 
     test = relationship("Test", back_populates="test_groups")
     group = relationship("Group", back_populates="test_groups")
-
 
 class Question(Base):
     __tablename__ = "questions"
