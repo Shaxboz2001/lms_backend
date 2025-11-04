@@ -92,17 +92,61 @@ def get_test(
     if not test:
         raise HTTPException(status_code=404, detail="Test topilmadi")
 
-    # student ruxsati
+    # Admin va manager hamma testlarni ko'rishi mumkin
+    if current_user.role in [UserRole.admin, UserRole.manager]:
+        return test
+
+    # STUDENT ruxsat tekshiruvi
     if current_user.role == UserRole.student:
-        student_groups = db.query(group_students.c.group_id).filter(
-            group_students.c.student_id == current_user.id
-        ).all()
-        student_group_ids = [g[0] for g in student_groups]
-        if test.group_id not in student_group_ids:
+        # student's group ids (relationship orqali yoki junction jadvalidan)
+        student_group_ids = [g.id for g in current_user.groups_as_student]
+
+        # agar studentda guruhlar bo'lmasa - ruxsat yo'q
+        if not student_group_ids:
             raise HTTPException(status_code=403, detail="Siz bu testni ko‘ra olmaysiz")
 
-    return test
+        # 1) agar test.group_id eski (direct) maydonda bo'lsa tekshiramiz
+        if test.group_id in student_group_ids:
+            return test
 
+        # 2) yoki TestGroup orqali biriktirilgan guruhlar orasida studentning guruhlari bor-yo'qligini tekshiramiz
+        tg = db.query(TestGroup).filter(
+            TestGroup.test_id == test_id,
+            TestGroup.group_id.in_(student_group_ids)
+        ).first()
+
+        if tg:
+            return test
+
+        raise HTTPException(status_code=403, detail="Siz bu testni ko‘ra olmaysiz")
+
+    # TEACHER ruxsat tekshiruvi
+    if current_user.role == UserRole.teacher:
+        # teacher yaratgan testni ko'ra oladi
+        if test.created_by == current_user.id:
+            return test
+
+        # teacher'ning guruhlari
+        teacher_group_ids = [g.id for g in current_user.groups_as_teacher]
+        if teacher_group_ids:
+            # direct group_id bilan tekshiruv (backward compat)
+            if test.group_id in teacher_group_ids:
+                return test
+
+            # yoki TestGroup orqali biriktirilgan bo'lsa
+            tg = db.query(TestGroup).filter(
+                TestGroup.test_id == test_id,
+                TestGroup.group_id.in_(teacher_group_ids)
+            ).first()
+
+            if tg:
+                return test
+
+        # agarda yuqoridagi shartlardan hech biri bajarilmasa - ruxsat yo'q
+        raise HTTPException(status_code=403, detail="Siz bu testni ko‘ra olmaysiz")
+
+    # default - ruxsat yo'q
+    raise HTTPException(status_code=403, detail="Siz bu testni ko‘ra olmaysiz")
 
 # ✅ Testni yuborish (Student)
 @tests_router.post("/{test_id}/submit")
