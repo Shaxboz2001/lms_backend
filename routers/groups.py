@@ -246,14 +246,11 @@ def get_students_by_group(group_id: int, db: Session = Depends(get_db)):
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    course_id = group.course_id
-
     students = (
         db.query(User)
-        .join(StudentCourse, StudentCourse.student_id == User.id)
         .filter(
             User.role == UserRole.student,
-            StudentCourse.course_id == course_id
+            User.group_id == group_id
         )
         .all()
     )
