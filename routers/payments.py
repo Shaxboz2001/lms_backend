@@ -73,13 +73,12 @@ def get_payments(
 # ================= POST /payments =================
 @payments_router.post("/", response_model=PaymentResponse)
 def create_payment(
-    amount: float = Body(..., gt=0),
-    description: Optional[str] = Body(None),
-    student_id: int = Body(...),
-    group_id: int = Body(...),
-    month: Optional[str] = Body(None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+        amount: float = Body(..., gt=0),
+        student_id: int = Body(...),
+        group_id: int = Body(...),
+        month: Optional[str] = Body(None),
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user)
 ):
     if current_user.role == UserRole.student:
         raise HTTPException(status_code=403, detail="Talabalar to‘lov qo‘sha olmaydi.")
@@ -93,11 +92,9 @@ def create_payment(
         raise HTTPException(status_code=404, detail="Guruh topilmadi.")
 
     if not month:
-        month = _to_yyyy_mm(date.today())
+        month = datetime.today().strftime("%Y-%m")
 
     course_price = group.course.price if group.course else 0
-
-    # Oldingi qarzlarni olish
     prev_debt = db.query(func.sum(Payment.debt_amount)).filter(
         Payment.student_id == student.id,
         Payment.group_id == group.id,
@@ -115,25 +112,25 @@ def create_payment(
 
     payment = Payment(
         amount=amount,
-        description=description or group.course.title,
         student_id=student_id,
         teacher_id=group.teacher_id,
         group_id=group_id,
         month=month,
         status=status,
         debt_amount=debt_amount,
-        created_at=datetime.utcnow(),
+        created_at=datetime.utcnow()
     )
-
     db.add(payment)
 
-    # Ortikcha to‘lov
     if amount > course_price and course_price > 0:
-        extra = amount - course_price
-        student.balance = (student.balance or 0) + extra
+        student.balance = (student.balance or 0) + (amount - course_price)
 
     db.commit()
     db.refresh(payment)
+
+    # QR kod uchun ma'lumot frontendga jo‘natiladi
+    payment.qr_data = f"O‘quvchi: {student.full_name}\nSumma: {amount} so‘m\nOy: {month}\nSana: {payment.created_at.isoformat()}"
+
     return payment
 
 # ================= GET /payments/student/{id} =================
